@@ -1,6 +1,7 @@
-// import {
-//   "amistozy/miniml" @lib,
-// }
+import {
+  "amistozy/miniml",
+  "moonbitlang/core/env",
+}
 
 options(
   "is-main": true,

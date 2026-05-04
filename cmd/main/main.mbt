@@ -1,7 +1,19 @@
 ///|
-/// Entry point for the CLI or runnable program in this template.
-/// Keep main focused; move logic into the library package.
-/// Run with `moon run cmd/main` from the project root.
+fn load_source(args : Array[String]) -> String {
+  if args.length() == 0 {
+    return "let rec fact n = if n == 0 then 1 else n * fact (n - 1) in fact 5"
+  }
+  args.join(" ")
+}
+
+///|
 fn main {
-  println("Hello")
+  let args = @env.args()[1:].to_owned()
+  let source = load_source(args)
+  println(@miniml.interpret(source)) catch {
+    err => {
+      println(err)
+      panic()
+    }
+  }
 }

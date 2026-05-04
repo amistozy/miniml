@@ -1,0 +1,104 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "amistozy/miniml"
+
+import {
+  "moonbitlang/core/ref",
+}
+
+// Values
+pub fn eval(String) -> Value raise MiniMLError
+
+pub fn interpret(String) -> String raise MiniMLError
+
+pub fn parse(String) -> Expr raise MiniMLError
+
+pub fn tokenize(String) -> Array[Token] raise MiniMLError
+
+// Errors
+pub suberror MiniMLError {
+  LexError(String)
+  ParseError(String)
+  RuntimeError(String)
+}
+pub impl Show for MiniMLError
+
+// Types and methods
+pub(all) enum BinaryOp {
+  Add
+  Sub
+  Mul
+  Div
+  Eq
+  NE
+  LT
+  LE
+  GT
+  GE
+  And
+  Or
+}
+pub impl Show for BinaryOp
+
+pub(all) struct Env {
+  bindings : Map[String, @ref.Ref[Value?]]
+  parent : Env?
+}
+
+pub(all) enum Expr {
+  IntExpr(Int)
+  BoolExpr(Bool)
+  VarExpr(String)
+  IfExpr(Expr, Expr, Expr)
+  LetExpr(String, Expr, Expr)
+  LetRecExpr(String, String, Expr, Expr)
+  FunExpr(String, Expr)
+  ApplyExpr(Expr, Expr)
+  BinaryExpr(BinaryOp, Expr, Expr)
+  NegExpr(Expr)
+  NotExpr(Expr)
+}
+pub impl Show for Expr
+
+pub(all) enum Token {
+  IntTok(Int)
+  BoolTok(Bool)
+  IdentTok(String)
+  LetTok
+  InTok
+  RecTok
+  FunTok
+  IfTok
+  ThenTok
+  ElseTok
+  LParenTok
+  RParenTok
+  ArrowTok
+  EqTok
+  PlusTok
+  MinusTok
+  StarTok
+  SlashTok
+  EqEqTok
+  NotEqTok
+  LtTok
+  LeTok
+  GtTok
+  GeTok
+  AndTok
+  OrTok
+  NotTok
+  EOFTok
+} derive(Eq)
+pub impl Show for Token
+
+pub(all) enum Value {
+  IntValue(Int)
+  BoolValue(Bool)
+  ClosureValue(String, Expr, Env)
+}
+pub impl Show for Value
+
+// Type aliases
+
+// Traits
+
