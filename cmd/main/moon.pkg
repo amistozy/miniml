@@ -1,0 +1,7 @@
+// import {
+//   "amistozy/miniml" @lib,
+// }
+
+options(
+  "is-main": true,
+)
