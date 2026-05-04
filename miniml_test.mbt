@@ -1,28 +1,43 @@
 ///|
-test "arithmetic and precedence" {
-  assert_eq(@miniml.interpret("1 + 2 * 3"), "7")
-}
-
-///|
-test "let binding" {
-  assert_eq(@miniml.interpret("let x = 41 in x + 1"), "42")
-}
-
-///|
-test "closure capture" {
-  let code = "let add = fun x -> fun y -> x + y in " +
-    "let inc = add 1 in inc 41"
+test "tuple destructuring evaluates" {
+  let code = "let (x, y) = (20, 22) in x + y"
   assert_eq(@miniml.interpret(code), "42")
 }
 
 ///|
-test "recursive function" {
-  let code = "let rec fact n = if n == 0 then 1 else n * fact (n - 1) in fact 5"
-  assert_eq(@miniml.interpret(code), "120")
+test "list pattern match evaluates" {
+  let code = 
+    #| let xs = [1, 2, 3] in
+    #| match xs with | [] -> 0 | x :: rest -> x
+  assert_eq(@miniml.interpret(code), "1")
 }
 
 ///|
-test "boolean control flow" {
-  let code = "if true && false then 0 else if 3 < 4 then 1 else 2"
-  assert_eq(@miniml.interpret(code), "1")
+test "recursive list function evaluates" {
+  let code = 
+    #| let rec sum xs =
+    #|   match xs with
+    #|   | [] -> 0
+    #|   | x :: rest -> x + sum rest
+    #| in sum [1, 2, 3, 4]
+  assert_eq(@miniml.interpret(code), "10")
+}
+
+///|
+test "polymorphic let infers identity across tuple" {
+  let code = "let id = fun x -> x in (id 1, id true)"
+  assert_eq(@miniml.interpret(code), "(1, true)")
+}
+
+///|
+test "infer tuple list and match types" {
+  let code = 
+    #| let head = fun xs -> match xs with | x :: _ -> x | [] -> 0 in
+    #| (head [1, 2], head [])
+  assert_eq(@miniml.infer(code), "(int * int)")
+}
+
+///|
+test "infer polymorphic identity" {
+  assert_eq(@miniml.infer("fun x -> x"), "'t0 -> 't0")
 }

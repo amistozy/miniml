@@ -8,6 +8,8 @@ import {
 // Values
 pub fn eval(String) -> Value raise MiniMLError
 
+pub fn infer(String) -> String raise MiniMLError
+
 pub fn interpret(String) -> String raise MiniMLError
 
 pub fn parse(String) -> Expr raise MiniMLError
@@ -19,6 +21,7 @@ pub suberror MiniMLError {
   LexError(String)
   ParseError(String)
   RuntimeError(String)
+  TypeError(String)
 }
 pub impl Show for MiniMLError
 
@@ -49,20 +52,46 @@ pub(all) enum Expr {
   BoolExpr(Bool)
   VarExpr(String)
   IfExpr(Expr, Expr, Expr)
-  LetExpr(String, Expr, Expr)
+  LetExpr(Pattern, Expr, Expr)
   LetRecExpr(String, String, Expr, Expr)
   FunExpr(String, Expr)
   ApplyExpr(Expr, Expr)
   BinaryExpr(BinaryOp, Expr, Expr)
   NegExpr(Expr)
   NotExpr(Expr)
+  TupleExpr(Array[Expr])
+  ListExpr(Array[Expr])
+  ConsExpr(Expr, Expr)
+  MatchExpr(Expr, Array[MatchArm])
 }
 pub impl Show for Expr
+
+pub(all) struct MatchArm {
+  pattern : Pattern
+  body : Expr
+}
+
+pub(all) enum Pattern {
+  WildcardPat
+  IntPat(Int)
+  BoolPat(Bool)
+  VarPat(String)
+  TuplePat(Array[Pattern])
+  NilPat
+  ConsPat(Pattern, Pattern)
+}
+pub impl Show for Pattern
+
+pub(all) struct Scheme {
+  vars : Array[Int]
+  ty : Type
+}
 
 pub(all) enum Token {
   IntTok(Int)
   BoolTok(Bool)
   IdentTok(String)
+  WildcardTok
   LetTok
   InTok
   RecTok
@@ -70,8 +99,12 @@ pub(all) enum Token {
   IfTok
   ThenTok
   ElseTok
+  MatchTok
+  WithTok
   LParenTok
   RParenTok
+  LBracketTok
+  RBracketTok
   ArrowTok
   EqTok
   PlusTok
@@ -87,14 +120,34 @@ pub(all) enum Token {
   AndTok
   OrTok
   NotTok
+  ConsTok
+  CommaTok
+  BarTok
   EOFTok
 } derive(Eq)
 pub impl Show for Token
+
+pub(all) enum Type {
+  IntType
+  BoolType
+  VarType(Int)
+  FunType(Type, Type)
+  TupleType(Array[Type])
+  ListType(Type)
+} derive(Eq)
+
+pub(all) struct TypeEnv {
+  bindings : Map[String, Scheme]
+  parent : TypeEnv?
+}
 
 pub(all) enum Value {
   IntValue(Int)
   BoolValue(Bool)
   ClosureValue(String, Expr, Env)
+  TupleValue(Array[Value])
+  NilValue
+  ConsValue(Value, Value)
 }
 pub impl Show for Value
 
