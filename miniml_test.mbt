@@ -91,3 +91,35 @@ test "infer match guard with shadowed name keeps inner type" {
     #| | _ -> 0
   assert_eq(@miniml.infer(code), "int")
 }
+
+///|
+test "option constructor match evaluates" {
+  let code = "match Some 1 with | Some x -> x | None -> 0"
+  assert_eq(@miniml.interpret(code), "1")
+}
+
+///|
+test "option constructor survives let binding" {
+  let code =
+    #| let wrap = fun x -> Some x in
+    #| match wrap 42 with
+    #| | Some y -> y
+    #| | None -> 0
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "infer some constructor type" {
+  assert_eq(@miniml.infer("fun x -> Some x"), "'t0 -> 't0 option")
+}
+
+///|
+test "infer option match type" {
+  let code =
+    #| let get_or = fun opt ->
+    #|   match opt with
+    #|   | Some x -> x
+    #|   | None -> 0
+    #| in get_or
+  assert_eq(@miniml.infer(code), "int option -> int")
+}

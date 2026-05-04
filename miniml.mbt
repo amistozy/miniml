@@ -21,6 +21,7 @@ pub(all) enum Token {
   IntTok(Int)
   BoolTok(Bool)
   IdentTok(String)
+  CtorTok(String)
   WildcardTok
   LetTok
   InTok
@@ -62,6 +63,7 @@ pub impl Show for Token with output(self, logger) {
     IntTok(n) => "Int(\{n})"
     BoolTok(b) => "Bool(\{b})"
     IdentTok(name) => "Ident(\{name})"
+    CtorTok(name) => "Ctor(\{name})"
     WildcardTok => "_"
     LetTok => "let"
     InTok => "in"
@@ -140,6 +142,7 @@ pub(all) enum Pattern {
   IntPat(Int)
   BoolPat(Bool)
   VarPat(String)
+  CtorPat(String, Array[Pattern])
   TuplePat(Array[Pattern])
   NilPat
   ConsPat(Pattern, Pattern)
@@ -192,6 +195,8 @@ pub(all) enum Value {
   IntValue(Int)
   BoolValue(Bool)
   ClosureValue(String, Expr, Env)
+  CtorFuncValue(String, Int, Array[Value])
+  VariantValue(String, Array[Value])
   TupleValue(Array[Value])
   NilValue
   ConsValue(Value, Value)
@@ -208,6 +213,7 @@ pub(all) enum Type {
   BoolType
   VarType(Int)
   FunType(Type, Type)
+  OptionType(Type)
   TupleType(Array[Type])
   ListType(Type)
 } derive(Eq)
@@ -239,6 +245,7 @@ priv struct TypePrinter {
 ///|
 priv enum MatchMatrixKind {
   BoolKind
+  OptionKind
   TupleKind(Int)
   ListKind
   UniversalKind
@@ -294,6 +301,7 @@ fn pattern_to_string(pattern : Pattern) -> String {
     IntPat(n) => n.to_string()
     BoolPat(b) => b.to_string()
     VarPat(name) => name
+    CtorPat(name, patterns) => ctor_pattern_to_string(name, patterns)
     TuplePat(patterns) => {
       let items = patterns.map(p => pattern_to_string(p)).join(", ")
       "(\{items})"
@@ -301,6 +309,97 @@ fn pattern_to_string(pattern : Pattern) -> String {
     NilPat => "[]"
     ConsPat(head, tail) =>
       "\{pattern_to_string(head)} :: \{pattern_to_string(tail)}"
+  }
+}
+
+///|
+fn pattern_hint_string(pattern : Pattern) -> String {
+  match pattern {
+    WildcardPat => "_"
+    IntPat(n) => n.to_string()
+    BoolPat(b) => b.to_string()
+    VarPat(name) => name
+    CtorPat(name, patterns) => ctor_pattern_hint_string(name, patterns)
+    TuplePat(patterns) => {
+      let items = patterns.map(p => pattern_hint_string(p)).join(", ")
+      "(\{items})"
+    }
+    NilPat | ConsPat(_, _) =>
+      match list_hint_string(pattern) {
+        Some(text) => text
+        None => pattern_to_string(pattern)
+      }
+  }
+}
+
+///|
+fn list_hint_string(pattern : Pattern) -> String? {
+  let items = Array::new()
+  let mut current = pattern
+  while true {
+    match current {
+      NilPat => {
+        let joined = items.join(", ")
+        return Some("[\{joined}]")
+      }
+      ConsPat(head, tail) => {
+        items.push(pattern_hint_string(head))
+        current = tail
+      }
+      WildcardPat | VarPat(_) => {
+        let body = if items.is_empty() {
+          "..."
+        } else {
+          items.join(", ") + ", ..."
+        }
+        return Some("[\{body}]")
+      }
+      _ =>
+        if items.is_empty() {
+          return None
+        } else {
+          let joined = items.join(", ")
+          let tail = pattern_hint_string(current)
+          return Some("[\{joined} | \{tail}]")
+        }
+    }
+  }
+  None
+}
+
+///|
+fn ctor_pattern_to_string(name : String, patterns : Array[Pattern]) -> String {
+  match patterns.length() {
+    0 => name
+    1 => "\{name} \{pattern_to_string(patterns[0])}"
+    _ => {
+      let items = patterns.map(p => pattern_to_string(p)).join(", ")
+      "\{name}(\{items})"
+    }
+  }
+}
+
+///|
+fn ctor_pattern_hint_string(name : String, patterns : Array[Pattern]) -> String {
+  match patterns.length() {
+    0 => name
+    1 => "\{name}(\{pattern_hint_string(patterns[0])})"
+    _ => {
+      let items = patterns.map(p => pattern_hint_string(p)).join(", ")
+      "\{name}(\{items})"
+    }
+  }
+}
+
+///|
+fn ctor_value_to_string(name : String, values : Array[Value]) -> String {
+  match values.length() {
+    0 => name
+    1 => "\{name}(\{value_to_string(values[0])})"
+    _ => {
+      let items = values.map(v => value_to_string(v)).join(", ")
+      "\{name}(\{items})"
+    }
   }
 }
 
@@ -331,6 +430,9 @@ fn value_to_string(value : Value) -> String {
     IntValue(n) => n.to_string()
     BoolValue(b) => b.to_string()
     ClosureValue(_, _, _) => "<fun>"
+    CtorFuncValue(name, arity, values) =>
+      "<ctor \{name}/\{arity - values.length()}>"
+    VariantValue(name, values) => ctor_value_to_string(name, values)
     TupleValue(values) => {
       let items = values.map(v => value_to_string(v)).join(", ")
       "(\{items})"
@@ -398,6 +500,24 @@ fn TypeEnv::lookup(self : TypeEnv, name : String) -> Scheme raise MiniMLError {
         None => raise TypeError("unbound variable `\{name}`")
       }
   }
+}
+
+///|
+fn base_runtime_env() -> Env {
+  Env::new()
+  .extend("None", VariantValue("None", []))
+  .extend("Some", CtorFuncValue("Some", 1, []))
+}
+
+///|
+fn base_type_env() -> TypeEnv {
+  let option_var = VarType(0)
+  TypeEnv::new()
+  .extend("None", Scheme::{ vars: [0], ty: OptionType(option_var) })
+  .extend("Some", Scheme::{
+    vars: [0],
+    ty: FunType(option_var, OptionType(option_var)),
+  })
 }
 
 ///|
@@ -572,7 +692,12 @@ pub fn tokenize(code : String) -> Array[Token] raise MiniMLError {
           "true" => BoolTok(true)
           "false" => BoolTok(false)
           "_" => WildcardTok
-          _ => IdentTok(ident)
+          _ =>
+            if ident.length() > 0 && ident[0] >= 'A' && ident[0] <= 'Z' {
+              CtorTok(ident)
+            } else {
+              IdentTok(ident)
+            }
         }
         tokens.push(token)
         rest = next
@@ -591,7 +716,26 @@ fn token_to_string(token : Token) -> String {
 ///|
 fn is_atom_start(token : Token) -> Bool {
   match token {
-    IntTok(_) | BoolTok(_) | IdentTok(_) | LParenTok | LBracketTok => true
+    IntTok(_)
+    | BoolTok(_)
+    | IdentTok(_)
+    | CtorTok(_)
+    | LParenTok
+    | LBracketTok => true
+    _ => false
+  }
+}
+
+///|
+fn is_pattern_atom_start(token : Token) -> Bool {
+  match token {
+    WildcardTok
+    | IntTok(_)
+    | BoolTok(_)
+    | IdentTok(_)
+    | CtorTok(_)
+    | LParenTok
+    | LBracketTok => true
     _ => false
   }
 }
@@ -651,6 +795,14 @@ fn parse_pattern_atom(
     IntTok(n) => (IntPat(n), rest)
     BoolTok(b) => (BoolPat(b), rest)
     IdentTok(name) => (VarPat(name), rest)
+    CtorTok(name) =>
+      match rest {
+        [next, ..] if is_pattern_atom_start(next) => {
+          let (sub_pattern, rest2) = parse_pattern_atom(rest)
+          (CtorPat(name, [sub_pattern]), rest2)
+        }
+        _ => (CtorPat(name, []), rest)
+      }
     LBracketTok =>
       match rest {
         [RBracketTok, .. rest2] => (NilPat, rest2)
@@ -744,6 +896,7 @@ fn parse_atom(
     IntTok(n) => (IntExpr(n), rest)
     BoolTok(b) => (BoolExpr(b), rest)
     IdentTok(name) => (VarExpr(name), rest)
+    CtorTok(name) => (VarExpr(name), rest)
     LBracketTok =>
       match rest {
         [RBracketTok, .. rest2] => (ListExpr([]), rest2)
@@ -1137,6 +1290,17 @@ fn value_eq(lhs : Value, rhs : Value) -> Bool raise MiniMLError {
   match (lhs, rhs) {
     (IntValue(a), IntValue(b)) => a == b
     (BoolValue(a), BoolValue(b)) => a == b
+    (VariantValue(name1, xs), VariantValue(name2, ys)) => {
+      if name1 != name2 || xs.length() != ys.length() {
+        return false
+      }
+      for i = 0; i < xs.length(); i = i + 1 {
+        if !value_eq(xs[i], ys[i]) {
+          return false
+        }
+      }
+      true
+    }
     (NilValue, NilValue) => true
     (ConsValue(h1, t1), ConsValue(h2, t2)) =>
       value_eq(h1, h2) && value_eq(t1, t2)
@@ -1183,6 +1347,24 @@ fn match_pattern(pattern : Pattern, value : Value, env : Env) -> Env? {
         _ => None
       }
     VarPat(name) => Some(env.extend(name, value))
+    CtorPat(name, patterns) =>
+      match value {
+        VariantValue(actual, values) => {
+          if name != actual || patterns.length() != values.length() {
+            return None
+          }
+          let mut current_env = Some(env)
+          for i = 0; i < patterns.length(); i = i + 1 {
+            match current_env {
+              Some(found_env) =>
+                current_env = match_pattern(patterns[i], values[i], found_env)
+              None => ()
+            }
+          }
+          current_env
+        }
+        _ => None
+      }
     TuplePat(patterns) =>
       match value {
         TupleValue(values) => {
@@ -1283,6 +1465,18 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
         ClosureValue(param, body, closure_env) => {
           let call_env = closure_env.extend(param, arg_value)
           eval_expr(body, call_env)
+        }
+        CtorFuncValue(name, arity, values) => {
+          let next_values = Array::new()
+          for value in values {
+            next_values.push(value)
+          }
+          next_values.push(arg_value)
+          if next_values.length() == arity {
+            VariantValue(name, next_values)
+          } else {
+            CtorFuncValue(name, arity, next_values)
+          }
         }
         _ => raise RuntimeError("attempted to call a non-function value")
       }
@@ -1392,6 +1586,14 @@ fn type_to_string_with(type_ : Type, printer : TypePrinter) -> String {
       }
       "\{arg_s} -> \{type_to_string_with(ret, printer)}"
     }
+    OptionType(elem) => {
+      let elem_s = match elem {
+        FunType(_, _) | TupleType(_) | OptionType(_) =>
+          "(\{type_to_string_with(elem, printer)})"
+        _ => type_to_string_with(elem, printer)
+      }
+      "\{elem_s} option"
+    }
     TupleType(types) => {
       let items = types.map(t => type_to_string_with(t, printer)).join(" * ")
       "(\{items})"
@@ -1432,6 +1634,7 @@ fn prune_type(type_ : Type, ctx : InferCtx) -> Type {
         None => VarType(id)
       }
     FunType(arg, ret) => FunType(prune_type(arg, ctx), prune_type(ret, ctx))
+    OptionType(elem) => OptionType(prune_type(elem, ctx))
     TupleType(types) => TupleType(types.map(fn(t) { prune_type(t, ctx) }))
     ListType(elem) => ListType(prune_type(elem, ctx))
     _ => type_
@@ -1444,6 +1647,7 @@ fn occurs_in(var_id : Int, type_ : Type, ctx : InferCtx) -> Bool {
     VarType(id) => id == var_id
     FunType(arg, ret) =>
       occurs_in(var_id, arg, ctx) || occurs_in(var_id, ret, ctx)
+    OptionType(elem) => occurs_in(var_id, elem, ctx)
     TupleType(types) => {
       for t in types {
         if occurs_in(var_id, t, ctx) {
@@ -1490,6 +1694,7 @@ fn unify(
       unify(arg1, arg2, ctx)
       unify(ret1, ret2, ctx)
     }
+    (OptionType(a), OptionType(b)) => unify(a, b, ctx)
     (TupleType(xs), TupleType(ys)) => {
       if xs.length() != ys.length() {
         raise TypeError("tuple lengths do not match")
@@ -1550,6 +1755,7 @@ fn ftv_type(type_ : Type, ctx : InferCtx) -> Array[Int] {
       append_unique(vars, ftv_type(ret, ctx))
       vars
     }
+    OptionType(elem) => ftv_type(elem, ctx)
     TupleType(types) => {
       let vars = Array::new()
       for t in types {
@@ -1600,6 +1806,7 @@ fn instantiate_type(
         instantiate_type(arg, mapping, ctx),
         instantiate_type(ret, mapping, ctx),
       )
+    OptionType(elem) => OptionType(instantiate_type(elem, mapping, ctx))
     TupleType(types) =>
       TupleType(types.map(fn(t) { instantiate_type(t, mapping, ctx) }))
     ListType(elem) => ListType(instantiate_type(elem, mapping, ctx))
@@ -1641,6 +1848,24 @@ fn infer_pattern(
     }
     VarPat(name) =>
       env.extend(name, Scheme::{ vars: [], ty: prune_type(expected, ctx) })
+    CtorPat(name, patterns) =>
+      match (name, patterns) {
+        ("None", []) => {
+          let elem_type = fresh_type_var(ctx)
+          unify(expected, OptionType(elem_type), ctx)
+          env
+        }
+        ("Some", [inner]) => {
+          let elem_type = fresh_type_var(ctx)
+          unify(expected, OptionType(elem_type), ctx)
+          infer_pattern(inner, elem_type, env, ctx)
+        }
+        ("Some", _) =>
+          raise TypeError("constructor `Some` expects exactly one pattern")
+        ("None", _) =>
+          raise TypeError("constructor `None` does not take pattern arguments")
+        _ => raise TypeError("unknown constructor `\{name}`")
+      }
     TuplePat(patterns) => {
       let element_types = Array::new()
       for _ in patterns {
@@ -1684,6 +1909,17 @@ fn bind_generalized_pattern(
   match pattern {
     WildcardPat | IntPat(_) | BoolPat(_) | NilPat => env
     VarPat(name) => env.extend(name, generalize(base_env, expected, ctx))
+    CtorPat(name, patterns) =>
+      match (name, patterns) {
+        ("None", []) => env
+        ("Some", [inner]) =>
+          match prune_type(expected, ctx) {
+            OptionType(elem) =>
+              bind_generalized_pattern(inner, elem, base_env, env, ctx)
+            _ => env
+          }
+        _ => env
+      }
     TuplePat(patterns) =>
       match prune_type(expected, ctx) {
         TupleType(types) => {
@@ -1813,6 +2049,7 @@ fn wildcard_patterns(count : Int) -> Array[Pattern] {
 fn match_matrix_kind(ty : Type, ctx : InferCtx) -> MatchMatrixKind {
   match prune_type(ty, ctx) {
     BoolType => BoolKind
+    OptionType(_) => OptionKind
     TupleType(types) => TupleKind(types.length())
     ListType(_) => ListKind
     _ => UniversalKind
@@ -1845,6 +2082,66 @@ fn specialize_bool_rows(
     } else {
       match head {
         BoolPat(value) if value == target => result.push(tail)
+        _ => ()
+      }
+    }
+  }
+  result
+}
+
+///|
+fn specialize_none_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
+  let result = Array::new()
+  for row in rows {
+    guard row.length() > 0 else { continue }
+    let head = row[0]
+    let tail = drop_first_pattern(row)
+    if pattern_is_wild(head) {
+      result.push(tail)
+    } else {
+      match head {
+        CtorPat("None", []) => result.push(tail)
+        _ => ()
+      }
+    }
+  }
+  result
+}
+
+///|
+fn specialize_some_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
+  let result = Array::new()
+  for row in rows {
+    guard row.length() > 0 else { continue }
+    let head = row[0]
+    let tail = drop_first_pattern(row)
+    if pattern_is_wild(head) {
+      result.push(concat_patterns([WildcardPat], tail))
+    } else {
+      match head {
+        CtorPat("Some", [inner]) => result.push(concat_patterns([inner], tail))
+        _ => ()
+      }
+    }
+  }
+  result
+}
+
+///|
+fn specialize_int_rows(
+  rows : Array[Array[Pattern]],
+  target : Int,
+) -> Array[Array[Pattern]] {
+  let result = Array::new()
+  for row in rows {
+    guard row.length() > 0 else { continue }
+    let head = row[0]
+    let tail = drop_first_pattern(row)
+    if pattern_is_wild(head) {
+      result.push(tail)
+    } else {
+      match head {
+        IntPat(value) if value == target => result.push(tail)
         _ => ()
       }
     }
@@ -1938,6 +2235,23 @@ fn patterns_cover_vector(
     BoolKind =>
       patterns_cover_vector(specialize_bool_rows(rows, true), tail_tys, ctx) &&
       patterns_cover_vector(specialize_bool_rows(rows, false), tail_tys, ctx)
+    OptionKind =>
+      match head_ty {
+        OptionType(elem_ty) => {
+          let none_ok = patterns_cover_vector(
+            specialize_none_rows(rows),
+            tail_tys,
+            ctx,
+          )
+          let some_ok = patterns_cover_vector(
+            specialize_some_rows(rows),
+            concat_types([elem_ty], tail_tys),
+            ctx,
+          )
+          none_ok && some_ok
+        }
+        _ => false
+      }
     TupleKind(arity) =>
       match head_ty {
         TupleType(elem_tys) => {
@@ -1963,6 +2277,123 @@ fn patterns_cover_vector(
           )
           nil_ok && cons_ok
         }
+        _ => false
+      }
+  }
+}
+
+///|
+fn useful_vector(
+  rows : Array[Array[Pattern]],
+  vector : Array[Pattern],
+  types : Array[Type],
+  ctx : InferCtx,
+) -> Bool {
+  if vector.length() == 0 {
+    return rows.length() == 0
+  }
+  for row in rows {
+    if row_is_all_wild(row) {
+      return false
+    }
+  }
+  let head_pat = vector[0]
+  let tail_vec = array_slice_patterns(vector, 1, vector.length())
+  let head_ty = prune_type(types[0], ctx)
+  let tail_tys = array_slice_types(types, 1)
+  match head_pat {
+    WildcardPat | VarPat(_) =>
+      match match_matrix_kind(head_ty, ctx) {
+        UniversalKind =>
+          useful_vector(default_rows(rows), tail_vec, tail_tys, ctx)
+        BoolKind =>
+          useful_vector(
+            specialize_bool_rows(rows, true),
+            prepend_pattern(BoolPat(true), tail_vec),
+            types,
+            ctx,
+          ) ||
+          useful_vector(
+            specialize_bool_rows(rows, false),
+            prepend_pattern(BoolPat(false), tail_vec),
+            types,
+            ctx,
+          )
+        OptionKind =>
+          match head_ty {
+            OptionType(elem_ty) =>
+              useful_vector(specialize_none_rows(rows), tail_vec, tail_tys, ctx) ||
+              useful_vector(
+                specialize_some_rows(rows),
+                concat_patterns([WildcardPat], tail_vec),
+                concat_types([elem_ty], tail_tys),
+                ctx,
+              )
+            _ => false
+          }
+        TupleKind(arity) =>
+          match head_ty {
+            TupleType(elem_tys) =>
+              useful_vector(
+                specialize_tuple_rows(rows, arity),
+                concat_patterns(wildcard_patterns(arity), tail_vec),
+                concat_types(elem_tys, tail_tys),
+                ctx,
+              )
+            _ => false
+          }
+        ListKind =>
+          match head_ty {
+            ListType(elem_ty) =>
+              useful_vector(specialize_nil_rows(rows), tail_vec, tail_tys, ctx) ||
+              useful_vector(
+                specialize_cons_rows(rows),
+                concat_patterns([WildcardPat, WildcardPat], tail_vec),
+                concat_types([elem_ty, head_ty], tail_tys),
+                ctx,
+              )
+            _ => false
+          }
+      }
+    IntPat(n) =>
+      useful_vector(specialize_int_rows(rows, n), tail_vec, tail_tys, ctx)
+    BoolPat(b) =>
+      useful_vector(specialize_bool_rows(rows, b), tail_vec, tail_tys, ctx)
+    CtorPat("None", []) =>
+      useful_vector(specialize_none_rows(rows), tail_vec, tail_tys, ctx)
+    CtorPat("Some", [inner]) =>
+      match head_ty {
+        OptionType(elem_ty) =>
+          useful_vector(
+            specialize_some_rows(rows),
+            concat_patterns([inner], tail_vec),
+            concat_types([elem_ty], tail_tys),
+            ctx,
+          )
+        _ => false
+      }
+    CtorPat(_, _) => false
+    TuplePat(parts) =>
+      match head_ty {
+        TupleType(elem_tys) =>
+          useful_vector(
+            specialize_tuple_rows(rows, parts.length()),
+            concat_patterns(parts, tail_vec),
+            concat_types(elem_tys, tail_tys),
+            ctx,
+          )
+        _ => false
+      }
+    NilPat => useful_vector(specialize_nil_rows(rows), tail_vec, tail_tys, ctx)
+    ConsPat(head, tail) =>
+      match head_ty {
+        ListType(elem_ty) =>
+          useful_vector(
+            specialize_cons_rows(rows),
+            concat_patterns([head, tail], tail_vec),
+            concat_types([elem_ty, head_ty], tail_tys),
+            ctx,
+          )
         _ => false
       }
   }
@@ -2017,6 +2448,34 @@ fn find_missing_vector(
         }
       }
     }
+    OptionKind =>
+      match head_ty {
+        OptionType(elem_ty) => {
+          let missing_none = find_missing_vector(
+            specialize_none_rows(rows),
+            tail_tys,
+            ctx,
+          )
+          match missing_none {
+            Some(rest) => Some(prepend_pattern(CtorPat("None", []), rest))
+            None => {
+              let missing_some = find_missing_vector(
+                specialize_some_rows(rows),
+                concat_types([elem_ty], tail_tys),
+                ctx,
+              )
+              match missing_some {
+                Some(vec) => {
+                  let rest = array_slice_patterns(vec, 1, vec.length())
+                  Some(prepend_pattern(CtorPat("Some", [vec[0]]), rest))
+                }
+                None => None
+              }
+            }
+          }
+        }
+        _ => None
+      }
     TupleKind(arity) =>
       match head_ty {
         TupleType(elem_tys) => {
@@ -2083,7 +2542,8 @@ fn check_match_exhaustiveness(
   if !patterns_cover_vector(rows, tys, ctx) {
     let missing_vec = find_missing_vector(rows, tys, ctx)
     let missing = match missing_vec {
-      Some(patterns) if patterns.length() > 0 => pattern_to_string(patterns[0])
+      Some(patterns) if patterns.length() > 0 =>
+        pattern_hint_string(patterns[0])
       _ => "_"
     }
     raise TypeError("non-exhaustive match, missing pattern `\{missing}`")
@@ -2213,8 +2673,25 @@ fn infer_expr(
       }
       let scrutinee_type = infer_expr(scrutinee, env, ctx)
       let result_type = fresh_type_var(ctx)
+      let covered_rows = Array::new()
       for arm in arms {
         let arm_env = infer_pattern(arm.pattern, scrutinee_type, env, ctx)
+        let checked_scrutinee_type = prune_type(scrutinee_type, ctx)
+        let is_useful = useful_vector(
+          covered_rows,
+          [arm.pattern],
+          [checked_scrutinee_type],
+          ctx,
+        )
+        if !is_useful {
+          let guard_text = match arm.guard_ {
+            Some(expr) => " if \{expr_to_string(expr)}"
+            None => ""
+          }
+          raise TypeError(
+            "redundant match arm `\{pattern_hint_string(arm.pattern)}\{guard_text}`",
+          )
+        }
         match arm.guard_ {
           Some(guard_expr) => {
             let guard_type = infer_expr(guard_expr, arm_env, ctx)
@@ -2224,6 +2701,9 @@ fn infer_expr(
         }
         let body_type = infer_expr(arm.body, arm_env, ctx)
         unify(result_type, body_type, ctx)
+        if arm.guard_ is None {
+          covered_rows.push([arm.pattern])
+        }
       }
       check_match_exhaustiveness(arms, scrutinee_type, ctx)
       prune_type(result_type, ctx)
@@ -2234,7 +2714,7 @@ fn infer_expr(
 ///|
 fn infer_ast(expr : Expr) -> Type raise MiniMLError {
   let ctx = InferCtx::new()
-  let type_ = infer_expr(expr, TypeEnv::new(), ctx)
+  let type_ = infer_expr(expr, base_type_env(), ctx)
   prune_type(type_, ctx)
 }
 
@@ -2247,7 +2727,7 @@ pub fn infer(code : String) -> String raise MiniMLError {
 pub fn eval(code : String) -> Value raise MiniMLError {
   let expr = parse(code)
   let _ = infer_ast(expr)
-  eval_expr(expr, Env::new())
+  eval_expr(expr, base_runtime_env())
 }
 
 ///|

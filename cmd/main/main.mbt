@@ -89,9 +89,7 @@ fn run_cli() -> Unit raise {
 
 ///|
 fn main {
-  try {
-    run_cli()
-  } catch {
+  run_cli() catch {
     err => println(err)
   }
 }

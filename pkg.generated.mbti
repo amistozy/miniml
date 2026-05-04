@@ -77,6 +77,7 @@ pub(all) enum Pattern {
   IntPat(Int)
   BoolPat(Bool)
   VarPat(String)
+  CtorPat(String, Array[Pattern])
   TuplePat(Array[Pattern])
   NilPat
   ConsPat(Pattern, Pattern)
@@ -92,6 +93,7 @@ pub(all) enum Token {
   IntTok(Int)
   BoolTok(Bool)
   IdentTok(String)
+  CtorTok(String)
   WildcardTok
   LetTok
   InTok
@@ -133,6 +135,7 @@ pub(all) enum Type {
   BoolType
   VarType(Int)
   FunType(Type, Type)
+  OptionType(Type)
   TupleType(Array[Type])
   ListType(Type)
 } derive(Eq)
@@ -146,6 +149,8 @@ pub(all) enum Value {
   IntValue(Int)
   BoolValue(Bool)
   ClosureValue(String, Expr, Env)
+  CtorFuncValue(String, Int, Array[Value])
+  VariantValue(String, Array[Value])
   TupleValue(Array[Value])
   NilValue
   ConsValue(Value, Value)

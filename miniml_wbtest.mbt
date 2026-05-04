@@ -78,6 +78,54 @@ test "guarded arm does not make match exhaustive" {
 }
 
 ///|
+test "non exhaustive list hint is human readable" {
+  let msg = try {
+    let _ = infer("match [] with | [] -> 0")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "non-exhaustive match, missing pattern `[_]`")
+}
+
+///|
+test "non exhaustive tuple hint is human readable" {
+  let msg = try {
+    let _ = infer("match (true, false) with | (true, _) -> 1")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "non-exhaustive match, missing pattern `(false, true)`")
+}
+
+///|
+test "redundant arm after wildcard is rejected" {
+  let msg = try {
+    let _ = infer("match true with | _ -> 1 | false -> 0")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "redundant match arm `false`")
+}
+
+///|
+test "redundant guarded arm after wildcard is rejected" {
+  let msg = try {
+    let _ = infer("match [1] with | _ -> 1 | x :: _ if x == 1 -> 2")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "redundant match arm `[x, ...] if (x == 1)`")
+}
+
+///|
 test "parse guard keeps shadowing pattern name" {
   let expr = parse("match xs with | x :: _ if x == 1 -> x | _ -> 0")
   match expr {
@@ -91,4 +139,51 @@ test "parse guard keeps shadowing pattern name" {
     }
     _ => assert_true(false)
   }
+}
+
+///|
+test "tokenize constructors" {
+  let tokens = tokenize("match Some 1 with | Some x -> x | None -> 0")
+  assert_eq(tokens[1], CtorTok("Some"))
+  assert_eq(tokens[5], CtorTok("Some"))
+  assert_eq(tokens[10], CtorTok("None"))
+}
+
+///|
+test "parse option match" {
+  let expr = parse("match opt with | Some x -> x | None -> 0")
+  match expr {
+    MatchExpr(VarExpr("opt"), arms) => {
+      assert_eq(arms.length(), 2)
+      assert_true(arms[0].pattern is CtorPat("Some", [VarPat("x")]))
+      assert_true(arms[0].body is VarExpr("x"))
+      assert_true(arms[1].pattern is CtorPat("None", []))
+      assert_true(arms[1].body is IntExpr(0))
+    }
+    _ => assert_true(false)
+  }
+}
+
+///|
+test "non exhaustive option hint is human readable" {
+  let msg = try {
+    let _ = infer("match None with | Some x -> x")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "non-exhaustive match, missing pattern `None`")
+}
+
+///|
+test "redundant option arm is rejected" {
+  let msg = try {
+    let _ = infer("match None with | _ -> 0 | None -> 1")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "redundant match arm `None`")
 }
