@@ -297,3 +297,26 @@ test "same enum name in different scopes stays nominally distinct" {
     msg, "cannot unify distinct enum types `Traffic` and `Traffic` (same name, different scopes)",
   )
 }
+
+///|
+test "parameterized enum conflict mentions type arguments" {
+  let code =
+    #| let f =
+    #|   enum Box[a] = Box(a) in
+    #|   fun x ->
+    #|     match x with
+    #|     | Box(v) -> v
+    #| in
+    #| enum Box[a] = Box(a) in
+    #| f (Box(1))
+  let msg = try {
+    let _ = infer(code)
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(
+    msg, "cannot unify distinct enum types `Box['t0]` and `Box[int]` (same name, different scopes)",
+  )
+}

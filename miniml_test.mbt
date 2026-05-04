@@ -181,3 +181,29 @@ test "parameterized enum match evaluates" {
     #| | Err(_) -> 0
   assert_eq(@miniml.interpret(code), "42")
 }
+
+///|
+test "recursive parameterized enum evaluates" {
+  let code =
+    #| enum List[a] = Nil | Cons(a, List[a]) in
+    #| let rec sum xs =
+    #|   match xs with
+    #|   | Nil -> 0
+    #|   | Cons(x, rest) -> x + sum rest
+    #| in
+    #| sum (Cons(1, Cons(2, Cons(3, Nil))))
+  assert_eq(@miniml.interpret(code), "6")
+}
+
+///|
+test "recursive parameterized enum infers recursive function type" {
+  let code =
+    #| enum List[a] = Nil | Cons(a, List[a]) in
+    #| let rec length xs =
+    #|   match xs with
+    #|   | Nil -> 0
+    #|   | Cons(_, rest) -> 1 + length rest
+    #| in
+    #| length
+  assert_eq(@miniml.infer(code), "List['t0] -> int")
+}

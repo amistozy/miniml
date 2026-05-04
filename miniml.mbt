@@ -2143,16 +2143,13 @@ fn bind_type_var(
 }
 
 ///|
-fn named_type_conflict_message(
-  lhs_name : String,
-  lhs_id : Int,
-  rhs_name : String,
-  rhs_id : Int,
-) -> String {
-  if lhs_name == rhs_name && lhs_id != rhs_id {
-    "cannot unify distinct enum types `\{lhs_name}` and `\{rhs_name}` (same name, different scopes)"
-  } else {
-    "cannot unify `\{lhs_name}` with `\{rhs_name}`"
+fn named_type_conflict_message(lhs : Type, rhs : Type) -> String {
+  match (lhs, rhs) {
+    (NamedType(lhs_name, lhs_id, _), NamedType(rhs_name, rhs_id, _)) if lhs_name ==
+      rhs_name &&
+      lhs_id != rhs_id =>
+      "cannot unify distinct enum types `\{type_to_string(lhs)}` and `\{type_to_string(rhs)}` (same name, different scopes)"
+    _ => "cannot unify `\{type_to_string(lhs)}` with `\{type_to_string(rhs)}`"
   }
 }
 
@@ -2182,8 +2179,8 @@ fn unify(
         unify(xs[i], ys[i], ctx)
       }
     }
-    (NamedType(a, ida, _), NamedType(b, idb, _)) =>
-      raise TypeError(named_type_conflict_message(a, ida, b, idb))
+    (NamedType(_, _, _), NamedType(_, _, _)) =>
+      raise TypeError(named_type_conflict_message(lhs, rhs))
     (TupleType(xs), TupleType(ys)) => {
       if xs.length() != ys.length() {
         raise TypeError("tuple lengths do not match")
