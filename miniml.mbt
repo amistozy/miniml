@@ -153,6 +153,7 @@ pub impl Show for Pattern with output(self, logger) {
 ///|
 pub(all) struct MatchArm {
   pattern : Pattern
+  guard_ : Expr?
   body : Expr
 }
 
@@ -236,6 +237,14 @@ priv struct TypePrinter {
 }
 
 ///|
+priv enum MatchMatrixKind {
+  BoolKind
+  TupleKind(Int)
+  ListKind
+  UniversalKind
+}
+
+///|
 fn expr_to_string(expr : Expr) -> String {
   match expr {
     IntExpr(n) => n.to_string()
@@ -266,7 +275,11 @@ fn expr_to_string(expr : Expr) -> String {
     MatchExpr(scrutinee, arms) => {
       let arm_text = arms
         .map(arm => {
-          " | \{pattern_to_string(arm.pattern)} -> \{expr_to_string(arm.body)}"
+          let guard_text = match arm.guard_ {
+            Some(expr) => " if \{expr_to_string(expr)}"
+            None => ""
+          }
+          " | \{pattern_to_string(arm.pattern)}\{guard_text} -> \{expr_to_string(arm.body)}"
         })
         .join("")
       "match \{expr_to_string(scrutinee)} with\{arm_text}"
@@ -993,9 +1006,16 @@ fn parse_match_arm(
 ) -> (MatchArm, ArrayView[Token]) raise MiniMLError {
   let tokens = if tokens is [BarTok, .. rest] { rest } else { tokens }
   let (pattern, rest) = parse_pattern(tokens)
+  let (guard_, rest) = match rest {
+    [IfTok, .. rest2] => {
+      let (guard_expr, rest3) = parse_expr(rest2)
+      (Some(guard_expr), rest3)
+    }
+    _ => (None, rest)
+  }
   let rest = expect_token(rest, ArrowTok)
   let (body, rest2) = parse_expr(rest)
-  (MatchArm::{ pattern, body }, rest2)
+  (MatchArm::{ pattern, guard_, body }, rest2)
 }
 
 ///|
@@ -1328,7 +1348,16 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
       let value = eval_expr(scrutinee, env)
       for arm in arms {
         match match_pattern(arm.pattern, value, env) {
-          Some(next_env) => return eval_expr(arm.body, next_env)
+          Some(next_env) =>
+            match arm.guard_ {
+              Some(guard_expr) =>
+                match eval_expr(guard_expr, next_env) {
+                  BoolValue(true) => return eval_expr(arm.body, next_env)
+                  BoolValue(false) => ()
+                  _ => raise RuntimeError("match guard must be a bool")
+                }
+              None => return eval_expr(arm.body, next_env)
+            }
           None => ()
         }
       }
@@ -1684,6 +1713,384 @@ fn bind_generalized_pattern(
 }
 
 ///|
+fn pattern_is_wild(pattern : Pattern) -> Bool {
+  match pattern {
+    WildcardPat | VarPat(_) => true
+    _ => false
+  }
+}
+
+///|
+fn row_is_all_wild(row : Array[Pattern]) -> Bool {
+  for pattern in row {
+    if !pattern_is_wild(pattern) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn drop_first_pattern(row : Array[Pattern]) -> Array[Pattern] {
+  let rest = Array::new()
+  for i = 1; i < row.length(); i = i + 1 {
+    rest.push(row[i])
+  }
+  rest
+}
+
+///|
+fn prepend_pattern(pattern : Pattern, rest : Array[Pattern]) -> Array[Pattern] {
+  let result = Array::new()
+  result.push(pattern)
+  for pat in rest {
+    result.push(pat)
+  }
+  result
+}
+
+///|
+fn array_slice_patterns(
+  patterns : Array[Pattern],
+  start : Int,
+  end_ : Int,
+) -> Array[Pattern] {
+  let result = Array::new()
+  for i = start; i < end_; i = i + 1 {
+    result.push(patterns[i])
+  }
+  result
+}
+
+///|
+fn array_slice_types(types : Array[Type], start : Int) -> Array[Type] {
+  let result = Array::new()
+  for i = start; i < types.length(); i = i + 1 {
+    result.push(types[i])
+  }
+  result
+}
+
+///|
+fn concat_patterns(
+  left : Array[Pattern],
+  right : Array[Pattern],
+) -> Array[Pattern] {
+  let result = Array::new()
+  for pat in left {
+    result.push(pat)
+  }
+  for pat in right {
+    result.push(pat)
+  }
+  result
+}
+
+///|
+fn concat_types(left : Array[Type], right : Array[Type]) -> Array[Type] {
+  let result = Array::new()
+  for ty in left {
+    result.push(ty)
+  }
+  for ty in right {
+    result.push(ty)
+  }
+  result
+}
+
+///|
+fn wildcard_patterns(count : Int) -> Array[Pattern] {
+  let result = Array::new()
+  let mut i = 0
+  while i < count {
+    result.push(WildcardPat)
+    i = i + 1
+  }
+  result
+}
+
+///|
+fn match_matrix_kind(ty : Type, ctx : InferCtx) -> MatchMatrixKind {
+  match prune_type(ty, ctx) {
+    BoolType => BoolKind
+    TupleType(types) => TupleKind(types.length())
+    ListType(_) => ListKind
+    _ => UniversalKind
+  }
+}
+
+///|
+fn default_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
+  let result = Array::new()
+  for row in rows {
+    if row.length() > 0 && pattern_is_wild(row[0]) {
+      result.push(drop_first_pattern(row))
+    }
+  }
+  result
+}
+
+///|
+fn specialize_bool_rows(
+  rows : Array[Array[Pattern]],
+  target : Bool,
+) -> Array[Array[Pattern]] {
+  let result = Array::new()
+  for row in rows {
+    guard row.length() > 0 else { continue }
+    let head = row[0]
+    let tail = drop_first_pattern(row)
+    if pattern_is_wild(head) {
+      result.push(tail)
+    } else {
+      match head {
+        BoolPat(value) if value == target => result.push(tail)
+        _ => ()
+      }
+    }
+  }
+  result
+}
+
+///|
+fn specialize_tuple_rows(
+  rows : Array[Array[Pattern]],
+  arity : Int,
+) -> Array[Array[Pattern]] {
+  let result = Array::new()
+  for row in rows {
+    guard row.length() > 0 else { continue }
+    let head = row[0]
+    let tail = drop_first_pattern(row)
+    if pattern_is_wild(head) {
+      result.push(concat_patterns(wildcard_patterns(arity), tail))
+    } else {
+      match head {
+        TuplePat(parts) if parts.length() == arity =>
+          result.push(concat_patterns(parts, tail))
+        _ => ()
+      }
+    }
+  }
+  result
+}
+
+///|
+fn specialize_nil_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
+  let result = Array::new()
+  for row in rows {
+    guard row.length() > 0 else { continue }
+    let head = row[0]
+    let tail = drop_first_pattern(row)
+    if pattern_is_wild(head) {
+      result.push(tail)
+    } else {
+      match head {
+        NilPat => result.push(tail)
+        _ => ()
+      }
+    }
+  }
+  result
+}
+
+///|
+fn specialize_cons_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
+  let result = Array::new()
+  for row in rows {
+    guard row.length() > 0 else { continue }
+    let head = row[0]
+    let tail = drop_first_pattern(row)
+    if pattern_is_wild(head) {
+      result.push(concat_patterns([WildcardPat, WildcardPat], tail))
+    } else {
+      match head {
+        ConsPat(head_pat, tail_pat) =>
+          result.push(concat_patterns([head_pat, tail_pat], tail))
+        _ => ()
+      }
+    }
+  }
+  result
+}
+
+///|
+fn patterns_cover_vector(
+  rows : Array[Array[Pattern]],
+  types : Array[Type],
+  ctx : InferCtx,
+) -> Bool {
+  if types.length() == 0 {
+    return rows.length() > 0
+  }
+  for row in rows {
+    if row_is_all_wild(row) {
+      return true
+    }
+  }
+  let head_ty = prune_type(types[0], ctx)
+  let tail_tys = array_slice_types(types, 1)
+  match match_matrix_kind(head_ty, ctx) {
+    UniversalKind => {
+      let defaults = default_rows(rows)
+      defaults.length() > 0 && patterns_cover_vector(defaults, tail_tys, ctx)
+    }
+    BoolKind =>
+      patterns_cover_vector(specialize_bool_rows(rows, true), tail_tys, ctx) &&
+      patterns_cover_vector(specialize_bool_rows(rows, false), tail_tys, ctx)
+    TupleKind(arity) =>
+      match head_ty {
+        TupleType(elem_tys) => {
+          let next_rows = specialize_tuple_rows(rows, arity)
+          let next_tys = concat_types(elem_tys, tail_tys)
+          patterns_cover_vector(next_rows, next_tys, ctx)
+        }
+        _ => false
+      }
+    ListKind =>
+      match head_ty {
+        ListType(elem_ty) => {
+          let nil_ok = patterns_cover_vector(
+            specialize_nil_rows(rows),
+            tail_tys,
+            ctx,
+          )
+          let cons_tys = concat_types([elem_ty, head_ty], tail_tys)
+          let cons_ok = patterns_cover_vector(
+            specialize_cons_rows(rows),
+            cons_tys,
+            ctx,
+          )
+          nil_ok && cons_ok
+        }
+        _ => false
+      }
+  }
+}
+
+///|
+fn find_missing_vector(
+  rows : Array[Array[Pattern]],
+  types : Array[Type],
+  ctx : InferCtx,
+) -> Array[Pattern]? {
+  if types.length() == 0 {
+    if rows.length() == 0 {
+      return Some([])
+    } else {
+      return None
+    }
+  }
+  for row in rows {
+    if row_is_all_wild(row) {
+      return None
+    }
+  }
+  let head_ty = prune_type(types[0], ctx)
+  let tail_tys = array_slice_types(types, 1)
+  match match_matrix_kind(head_ty, ctx) {
+    UniversalKind => {
+      let missing = find_missing_vector(default_rows(rows), tail_tys, ctx)
+      match missing {
+        Some(rest) => Some(prepend_pattern(WildcardPat, rest))
+        None => None
+      }
+    }
+    BoolKind => {
+      let missing_true = find_missing_vector(
+        specialize_bool_rows(rows, true),
+        tail_tys,
+        ctx,
+      )
+      match missing_true {
+        Some(rest) => Some(prepend_pattern(BoolPat(true), rest))
+        None => {
+          let missing_false = find_missing_vector(
+            specialize_bool_rows(rows, false),
+            tail_tys,
+            ctx,
+          )
+          match missing_false {
+            Some(rest) => Some(prepend_pattern(BoolPat(false), rest))
+            None => None
+          }
+        }
+      }
+    }
+    TupleKind(arity) =>
+      match head_ty {
+        TupleType(elem_tys) => {
+          let missing = find_missing_vector(
+            specialize_tuple_rows(rows, arity),
+            concat_types(elem_tys, tail_tys),
+            ctx,
+          )
+          match missing {
+            Some(vec) => {
+              let tuple_parts = array_slice_patterns(vec, 0, arity)
+              let rest = array_slice_patterns(vec, arity, vec.length())
+              Some(prepend_pattern(TuplePat(tuple_parts), rest))
+            }
+            None => None
+          }
+        }
+        _ => None
+      }
+    ListKind =>
+      match head_ty {
+        ListType(elem_ty) => {
+          let missing_nil = find_missing_vector(
+            specialize_nil_rows(rows),
+            tail_tys,
+            ctx,
+          )
+          match missing_nil {
+            Some(rest) => Some(prepend_pattern(NilPat, rest))
+            None => {
+              let missing_cons = find_missing_vector(
+                specialize_cons_rows(rows),
+                concat_types([elem_ty, head_ty], tail_tys),
+                ctx,
+              )
+              match missing_cons {
+                Some(vec) => {
+                  let rest = array_slice_patterns(vec, 2, vec.length())
+                  Some(prepend_pattern(ConsPat(vec[0], vec[1]), rest))
+                }
+                None => None
+              }
+            }
+          }
+        }
+        _ => None
+      }
+  }
+}
+
+///|
+fn check_match_exhaustiveness(
+  arms : Array[MatchArm],
+  scrutinee_ty : Type,
+  ctx : InferCtx,
+) -> Unit raise MiniMLError {
+  let rows = Array::new()
+  for arm in arms {
+    if arm.guard_ is None {
+      rows.push([arm.pattern])
+    }
+  }
+  let tys = [prune_type(scrutinee_ty, ctx)]
+  if !patterns_cover_vector(rows, tys, ctx) {
+    let missing_vec = find_missing_vector(rows, tys, ctx)
+    let missing = match missing_vec {
+      Some(patterns) if patterns.length() > 0 => pattern_to_string(patterns[0])
+      _ => "_"
+    }
+    raise TypeError("non-exhaustive match, missing pattern `\{missing}`")
+  }
+}
+
+///|
 fn infer_expr(
   expr : Expr,
   env : TypeEnv,
@@ -1808,9 +2215,17 @@ fn infer_expr(
       let result_type = fresh_type_var(ctx)
       for arm in arms {
         let arm_env = infer_pattern(arm.pattern, scrutinee_type, env, ctx)
+        match arm.guard_ {
+          Some(guard_expr) => {
+            let guard_type = infer_expr(guard_expr, arm_env, ctx)
+            unify(guard_type, BoolType, ctx)
+          }
+          None => ()
+        }
         let body_type = infer_expr(arm.body, arm_env, ctx)
         unify(result_type, body_type, ctx)
       }
+      check_match_exhaustiveness(arms, scrutinee_type, ctx)
       prune_type(result_type, ctx)
     }
   }

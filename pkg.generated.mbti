@@ -68,6 +68,7 @@ pub impl Show for Expr
 
 pub(all) struct MatchArm {
   pattern : Pattern
+  guard_ : Expr?
   body : Expr
 }
 

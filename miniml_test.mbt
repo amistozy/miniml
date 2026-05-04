@@ -6,7 +6,7 @@ test "tuple destructuring evaluates" {
 
 ///|
 test "list pattern match evaluates" {
-  let code = 
+  let code =
     #| let xs = [1, 2, 3] in
     #| match xs with | [] -> 0 | x :: rest -> x
   assert_eq(@miniml.interpret(code), "1")
@@ -14,7 +14,7 @@ test "list pattern match evaluates" {
 
 ///|
 test "recursive list function evaluates" {
-  let code = 
+  let code =
     #| let rec sum xs =
     #|   match xs with
     #|   | [] -> 0
@@ -31,7 +31,7 @@ test "polymorphic let infers identity across tuple" {
 
 ///|
 test "infer tuple list and match types" {
-  let code = 
+  let code =
     #| let head = fun xs -> match xs with | x :: _ -> x | [] -> 0 in
     #| (head [1, 2], head [])
   assert_eq(@miniml.infer(code), "(int * int)")
@@ -40,4 +40,14 @@ test "infer tuple list and match types" {
 ///|
 test "infer polymorphic identity" {
   assert_eq(@miniml.infer("fun x -> x"), "'t0 -> 't0")
+}
+
+///|
+test "match guard evaluates" {
+  let code =
+    #| match [1, 2] with
+    #| | x :: _ if x == 0 -> 0
+    #| | x :: _ if x == 1 -> 42
+    #| | _ -> 7
+  assert_eq(@miniml.interpret(code), "42")
 }
