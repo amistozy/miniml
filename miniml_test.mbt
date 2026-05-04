@@ -150,7 +150,34 @@ test "user defined enum type inference works" {
 test "user defined enum constructor can carry tuple payload" {
   let code =
     #| enum PairBox = Box((int * bool)) in
-    #| match Box (1, true) with
-    #| | Box (x, y) -> if y then x else 0
+    #| match Box((1, true)) with
+    #| | Box((x, y)) -> if y then x else 0
   assert_eq(@miniml.interpret(code), "1")
+}
+
+///|
+test "multi argument variant direct syntax evaluates" {
+  let code =
+    #| enum Rgb = RGB(int, int, int) in
+    #| match RGB(1, 2, 3) with
+    #| | RGB(r, g, b) -> r + g + b
+  assert_eq(@miniml.interpret(code), "6")
+}
+
+///|
+test "parameterized enum constructors infer polymorphically" {
+  let code =
+    #| enum Option[a] = None | Some(a) in
+    #| fun x -> Some x
+  assert_eq(@miniml.infer(code), "'t0 -> Option['t0]")
+}
+
+///|
+test "parameterized enum match evaluates" {
+  let code =
+    #| enum Result[a, e] = Ok(a) | Err(e) in
+    #| match Ok(42) with
+    #| | Ok(x) -> x
+    #| | Err(_) -> 0
+  assert_eq(@miniml.interpret(code), "42")
 }

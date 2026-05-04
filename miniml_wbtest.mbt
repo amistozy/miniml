@@ -196,13 +196,37 @@ test "parse local enum expression" {
   match expr {
     EnumExpr(decl, MatchExpr(ApplyExpr(VarExpr("Some"), IntExpr(1)), arms)) => {
       assert_eq(decl.name, "Maybe")
+      assert_eq(decl.type_params.length(), 0)
       assert_eq(decl.variants.length(), 2)
       assert_eq(decl.variants[0].name, "None")
-      assert_true(decl.variants[0].payload is None)
+      assert_eq(decl.variants[0].fields.length(), 0)
       assert_eq(decl.variants[1].name, "Some")
-      assert_true(decl.variants[1].payload is Some(IntDeclType))
+      assert_eq(decl.variants[1].fields.length(), 1)
+      assert_true(decl.variants[1].fields[0] is IntDeclType)
       assert_true(arms[0].pattern is CtorPat("Some", [VarPat("x")]))
       assert_true(arms[1].pattern is CtorPat("None", []))
+    }
+    _ => assert_true(false)
+  }
+}
+
+///|
+test "parse parameterized enum and multi arg constructor" {
+  let expr = parse(
+    "enum Result[a, e] = Ok(a) | Err(e) | Pair(a, e) in Pair(1, true)",
+  )
+  match expr {
+    EnumExpr(
+      decl,
+      ApplyExpr(ApplyExpr(VarExpr("Pair"), IntExpr(1)), BoolExpr(true))
+    ) => {
+      assert_eq(decl.name, "Result")
+      assert_eq(decl.type_params, ["a", "e"])
+      assert_eq(decl.variants.length(), 3)
+      assert_eq(decl.variants[2].name, "Pair")
+      assert_eq(decl.variants[2].fields.length(), 2)
+      assert_true(decl.variants[2].fields[0] is TypeVarDeclType("a"))
+      assert_true(decl.variants[2].fields[1] is TypeVarDeclType("e"))
     }
     _ => assert_true(false)
   }

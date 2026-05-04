@@ -45,19 +45,21 @@ pub impl Show for BinaryOp
 pub(all) enum DeclType {
   IntDeclType
   BoolDeclType
-  NamedDeclType(String)
+  TypeVarDeclType(String)
+  NamedDeclType(String, Array[DeclType])
   TupleDeclType(Array[DeclType])
   ListDeclType(DeclType)
 }
 
 pub(all) struct EnumDecl {
   name : String
+  type_params : Array[String]
   variants : Array[EnumVariantDecl]
 }
 
 pub(all) struct EnumVariantDecl {
   name : String
-  payload : DeclType?
+  fields : Array[DeclType]
 }
 
 pub(all) struct Env {
@@ -156,7 +158,7 @@ pub(all) enum Type {
   VarType(Int)
   FunType(Type, Type)
   OptionType(Type)
-  NamedType(String, Int)
+  NamedType(String, Int, Array[Type])
   TupleType(Array[Type])
   ListType(Type)
 } derive(Eq)
