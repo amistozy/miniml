@@ -51,3 +51,43 @@ test "match guard evaluates" {
     #| | _ -> 7
   assert_eq(@miniml.interpret(code), "42")
 }
+
+///|
+test "match guard pattern binding shadows outer name" {
+  let code =
+    #| let x = 100 in
+    #| match [1] with
+    #| | x :: _ if x == 1 -> x
+    #| | _ -> 0
+  assert_eq(@miniml.interpret(code), "1")
+}
+
+///|
+test "failed match guard does not leak shadowed binding" {
+  let code =
+    #| let x = 100 in
+    #| match [1] with
+    #| | x :: _ if x == 2 -> x
+    #| | _ -> x
+  assert_eq(@miniml.interpret(code), "100")
+}
+
+///|
+test "match guard can use both outer and pattern scoped names" {
+  let code =
+    #| let target = 3 in
+    #| match (3, 4) with
+    #| | (target, y) if y == 4 -> target
+    #| | _ -> 0
+  assert_eq(@miniml.interpret(code), "3")
+}
+
+///|
+test "infer match guard with shadowed name keeps inner type" {
+  let code =
+    #| let x = true in
+    #| match [1] with
+    #| | x :: _ if x == 1 -> x
+    #| | _ -> 0
+  assert_eq(@miniml.infer(code), "int")
+}

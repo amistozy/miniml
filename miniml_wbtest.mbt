@@ -76,3 +76,19 @@ test "guarded arm does not make match exhaustive" {
   }
   assert_eq(msg, "non-exhaustive match, missing pattern `[]`")
 }
+
+///|
+test "parse guard keeps shadowing pattern name" {
+  let expr = parse("match xs with | x :: _ if x == 1 -> x | _ -> 0")
+  match expr {
+    MatchExpr(VarExpr("xs"), arms) => {
+      assert_eq(arms.length(), 2)
+      assert_true(arms[0].pattern is ConsPat(VarPat("x"), WildcardPat))
+      assert_true(
+        arms[0].guard_ is Some(BinaryExpr(Eq, VarExpr("x"), IntExpr(1))),
+      )
+      assert_true(arms[0].body is VarExpr("x"))
+    }
+    _ => assert_true(false)
+  }
+}
