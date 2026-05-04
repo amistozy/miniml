@@ -42,6 +42,24 @@ pub(all) enum BinaryOp {
 }
 pub impl Show for BinaryOp
 
+pub(all) enum DeclType {
+  IntDeclType
+  BoolDeclType
+  NamedDeclType(String)
+  TupleDeclType(Array[DeclType])
+  ListDeclType(DeclType)
+}
+
+pub(all) struct EnumDecl {
+  name : String
+  variants : Array[EnumVariantDecl]
+}
+
+pub(all) struct EnumVariantDecl {
+  name : String
+  payload : DeclType?
+}
+
 pub(all) struct Env {
   bindings : Map[String, @ref.Ref[Value?]]
   parent : Env?
@@ -52,6 +70,7 @@ pub(all) enum Expr {
   BoolExpr(Bool)
   VarExpr(String)
   IfExpr(Expr, Expr, Expr)
+  EnumExpr(EnumDecl, Expr)
   LetExpr(Pattern, Expr, Expr)
   LetRecExpr(String, String, Expr, Expr)
   FunExpr(String, Expr)
@@ -98,6 +117,7 @@ pub(all) enum Token {
   LetTok
   InTok
   RecTok
+  EnumTok
   FunTok
   IfTok
   ThenTok
@@ -136,6 +156,7 @@ pub(all) enum Type {
   VarType(Int)
   FunType(Type, Type)
   OptionType(Type)
+  NamedType(String, Int)
   TupleType(Array[Type])
   ListType(Type)
 } derive(Eq)

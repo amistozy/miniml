@@ -123,3 +123,34 @@ test "infer option match type" {
     #| in get_or
   assert_eq(@miniml.infer(code), "int option -> int")
 }
+
+///|
+test "user defined enum match evaluates" {
+  let code =
+    #| enum Maybe = None | Some(int) in
+    #| match Some 42 with
+    #| | Some x -> x
+    #| | None -> 0
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "user defined enum type inference works" {
+  let code =
+    #| enum Traffic = Red | Yellow | Green in
+    #| fun light ->
+    #|   match light with
+    #|   | Red -> 0
+    #|   | Yellow -> 1
+    #|   | Green -> 2
+  assert_eq(@miniml.infer(code), "Traffic -> int")
+}
+
+///|
+test "user defined enum constructor can carry tuple payload" {
+  let code =
+    #| enum PairBox = Box((int * bool)) in
+    #| match Box (1, true) with
+    #| | Box (x, y) -> if y then x else 0
+  assert_eq(@miniml.interpret(code), "1")
+}

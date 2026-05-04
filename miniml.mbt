@@ -26,6 +26,7 @@ pub(all) enum Token {
   LetTok
   InTok
   RecTok
+  EnumTok
   FunTok
   IfTok
   ThenTok
@@ -68,6 +69,7 @@ pub impl Show for Token with output(self, logger) {
     LetTok => "let"
     InTok => "in"
     RecTok => "rec"
+    EnumTok => "enum"
     FunTok => "fun"
     IfTok => "if"
     ThenTok => "then"
@@ -161,11 +163,33 @@ pub(all) struct MatchArm {
 }
 
 ///|
+pub(all) enum DeclType {
+  IntDeclType
+  BoolDeclType
+  NamedDeclType(String)
+  TupleDeclType(Array[DeclType])
+  ListDeclType(DeclType)
+}
+
+///|
+pub(all) struct EnumVariantDecl {
+  name : String
+  payload : DeclType?
+}
+
+///|
+pub(all) struct EnumDecl {
+  name : String
+  variants : Array[EnumVariantDecl]
+}
+
+///|
 pub(all) enum Expr {
   IntExpr(Int)
   BoolExpr(Bool)
   VarExpr(String)
   IfExpr(Expr, Expr, Expr)
+  EnumExpr(EnumDecl, Expr)
   LetExpr(Pattern, Expr, Expr)
   LetRecExpr(String, String, Expr, Expr)
   FunExpr(String, Expr)
@@ -214,6 +238,7 @@ pub(all) enum Type {
   VarType(Int)
   FunType(Type, Type)
   OptionType(Type)
+  NamedType(String, Int)
   TupleType(Array[Type])
   ListType(Type)
 } derive(Eq)
@@ -233,7 +258,11 @@ pub(all) struct TypeEnv {
 ///|
 priv struct InferCtx {
   mut next_id : Int
+  mut next_enum_id : Int
   subst : Map[Int, Type]
+  enum_defs : Map[Int, EnumDecl]
+  type_name_to_enum : Map[String, Int]
+  ctor_to_enum : Map[String, Int]
 }
 
 ///|
@@ -246,6 +275,7 @@ priv struct TypePrinter {
 priv enum MatchMatrixKind {
   BoolKind
   OptionKind
+  EnumKind(Int)
   TupleKind(Int)
   ListKind
   UniversalKind
@@ -259,6 +289,8 @@ fn expr_to_string(expr : Expr) -> String {
     VarExpr(name) => name
     IfExpr(cond, then_, else_) =>
       "if \{expr_to_string(cond)} then \{expr_to_string(then_)} else \{expr_to_string(else_)}"
+    EnumExpr(decl, body) =>
+      "enum \{enum_decl_to_string(decl)} in \{expr_to_string(body)}"
     LetExpr(pattern, bound, body) =>
       "let \{pattern_to_string(pattern)} = \{expr_to_string(bound)} in \{expr_to_string(body)}"
     LetRecExpr(name, param, fun_body, body) =>
@@ -292,6 +324,39 @@ fn expr_to_string(expr : Expr) -> String {
       "match \{expr_to_string(scrutinee)} with\{arm_text}"
     }
   }
+}
+
+///|
+fn decl_type_to_string(type_ : DeclType) -> String {
+  match type_ {
+    IntDeclType => "int"
+    BoolDeclType => "bool"
+    NamedDeclType(name) => name
+    TupleDeclType(types) => {
+      let items = types.map(t => decl_type_to_string(t)).join(" * ")
+      "(\{items})"
+    }
+    ListDeclType(elem) => {
+      let elem_s = match elem {
+        TupleDeclType(_) => "(\{decl_type_to_string(elem)})"
+        _ => decl_type_to_string(elem)
+      }
+      "\{elem_s} list"
+    }
+  }
+}
+
+///|
+fn enum_decl_to_string(decl : EnumDecl) -> String {
+  let variants = decl.variants
+    .map(variant => {
+      match variant.payload {
+        Some(payload) => "\{variant.name}(\{decl_type_to_string(payload)})"
+        None => variant.name
+      }
+    })
+    .join(" | ")
+  "\{decl.name} = \{variants}"
 }
 
 ///|
@@ -522,7 +587,14 @@ fn base_type_env() -> TypeEnv {
 
 ///|
 fn InferCtx::new() -> InferCtx {
-  InferCtx::{ next_id: 0, subst: Map::new() }
+  InferCtx::{
+    next_id: 0,
+    next_enum_id: 0,
+    subst: Map::new(),
+    enum_defs: Map::new(),
+    type_name_to_enum: Map::new(),
+    ctor_to_enum: Map::new(),
+  }
 }
 
 ///|
@@ -683,6 +755,7 @@ pub fn tokenize(code : String) -> Array[Token] raise MiniMLError {
           "let" => LetTok
           "in" => InTok
           "rec" => RecTok
+          "enum" => EnumTok
           "fun" => FunTok
           "if" => IfTok
           "then" => ThenTok
@@ -769,6 +842,20 @@ fn expect_ident(
   match tok {
     IdentTok(name) => (name, rest)
     _ => raise ParseError("expected identifier, got \{token_to_string(tok)}")
+  }
+}
+
+///|
+fn expect_ctor_name(
+  tokens : ArrayView[Token],
+) -> (String, ArrayView[Token]) raise MiniMLError {
+  guard tokens is [tok, .. rest] else {
+    raise ParseError("expected constructor name, but reached end of input")
+  }
+  match tok {
+    CtorTok(name) => (name, rest)
+    _ =>
+      raise ParseError("expected constructor name, got \{token_to_string(tok)}")
   }
 }
 
@@ -1202,6 +1289,113 @@ fn parse_match(
 }
 
 ///|
+fn parse_decl_type_atom(
+  tokens : ArrayView[Token],
+) -> (DeclType, ArrayView[Token]) raise MiniMLError {
+  guard tokens is [tok, .. rest] else {
+    raise ParseError("expected type, but reached end of input")
+  }
+  match tok {
+    IdentTok("int") => (IntDeclType, rest)
+    IdentTok("bool") => (BoolDeclType, rest)
+    CtorTok(name) => (NamedDeclType(name), rest)
+    LParenTok =>
+      match rest {
+        [RParenTok, ..] => raise ParseError("empty tuple type is not supported")
+        _ => {
+          let (first, rest2) = parse_decl_type(rest)
+          match rest2 {
+            [StarTok, .. rest3] => {
+              let items = Array::new()
+              items.push(first)
+              let mut current = rest3
+              while true {
+                let (next_type, rest4) = parse_decl_type(current)
+                items.push(next_type)
+                current = rest4
+                match current {
+                  [StarTok, .. rest5] => current = rest5
+                  [RParenTok, .. rest5] => return (TupleDeclType(items), rest5)
+                  [tok2, ..] =>
+                    raise ParseError(
+                      "expected `*` or `)` in tuple type, got \{token_to_string(tok2)}",
+                    )
+                  [] => raise ParseError("expected `)` to close tuple type")
+                }
+              }
+              (first, current)
+            }
+            [RParenTok, .. rest3] => (first, rest3)
+            [tok2, ..] =>
+              raise ParseError(
+                "expected `*` or `)` in parenthesized type, got \{token_to_string(tok2)}",
+              )
+            [] => raise ParseError("expected `)` to close parenthesized type")
+          }
+        }
+      }
+    _ => raise ParseError("expected type, got \{token_to_string(tok)}")
+  }
+}
+
+///|
+fn parse_decl_type(
+  tokens : ArrayView[Token],
+) -> (DeclType, ArrayView[Token]) raise MiniMLError {
+  let (base, rest) = parse_decl_type_atom(tokens)
+  match rest {
+    [IdentTok("list"), .. rest2] => (ListDeclType(base), rest2)
+    _ => (base, rest)
+  }
+}
+
+///|
+fn parse_enum_variant_decl(
+  tokens : ArrayView[Token],
+) -> (EnumVariantDecl, ArrayView[Token]) raise MiniMLError {
+  let (name, rest) = expect_ctor_name(tokens)
+  match rest {
+    [LParenTok, .. rest2] => {
+      let (payload, rest3) = parse_decl_type(rest2)
+      let rest4 = expect_token(rest3, RParenTok)
+      (EnumVariantDecl::{ name, payload: Some(payload) }, rest4)
+    }
+    _ => (EnumVariantDecl::{ name, payload: None }, rest)
+  }
+}
+
+///|
+fn parse_enum(
+  tokens : ArrayView[Token],
+) -> (Expr, ArrayView[Token]) raise MiniMLError {
+  guard tokens is [tok, .. rest] else {
+    raise ParseError("expected expression, but reached end of input")
+  }
+  if tok != EnumTok {
+    return parse_let(tokens)
+  }
+  let (name, rest2) = expect_ctor_name(rest)
+  let rest3 = expect_token(rest2, EqTok)
+  let variants = Array::new()
+  let (first_variant, rest4) = parse_enum_variant_decl(rest3)
+  variants.push(first_variant)
+  let mut current = rest4
+  while true {
+    match current {
+      [BarTok, .. rest5] => {
+        let (variant, rest6) = parse_enum_variant_decl(rest5)
+        variants.push(variant)
+        current = rest6
+      }
+      _ => break
+    }
+  }
+  let rest5 = expect_token(current, InTok)
+  let (body, rest6) = parse_expr(rest5)
+  (EnumExpr(EnumDecl::{ name, variants }, body), rest6)
+}
+
+///|
 fn parse_fun(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
@@ -1270,7 +1464,7 @@ fn parse_let(
 fn parse_expr(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
-  parse_let(tokens)
+  parse_enum(tokens)
 }
 
 ///|
@@ -1319,6 +1513,54 @@ fn value_eq(lhs : Value, rhs : Value) -> Bool raise MiniMLError {
       raise RuntimeError("cannot compare function values")
     _ => false
   }
+}
+
+///|
+fn resolve_decl_type(
+  type_ : DeclType,
+  enum_name : String,
+  enum_id : Int,
+  ctx : InferCtx,
+) -> Type {
+  match type_ {
+    IntDeclType => IntType
+    BoolDeclType => BoolType
+    NamedDeclType(name) =>
+      if name == enum_name {
+        NamedType(name, enum_id)
+      } else {
+        match ctx.type_name_to_enum.get(name) {
+          Some(found_id) => NamedType(name, found_id)
+          None => NamedType(name, -1)
+        }
+      }
+    TupleDeclType(types) =>
+      TupleType(types.map(t => resolve_decl_type(t, enum_name, enum_id, ctx)))
+    ListDeclType(elem) =>
+      ListType(resolve_decl_type(elem, enum_name, enum_id, ctx))
+  }
+}
+
+///|
+fn enum_ctor_type(
+  enum_name : String,
+  enum_id : Int,
+  variant : EnumVariantDecl,
+  ctx : InferCtx,
+) -> Type {
+  let result_ty = NamedType(enum_name, enum_id)
+  match variant.payload {
+    Some(payload) =>
+      FunType(resolve_decl_type(payload, enum_name, enum_id, ctx), result_ty)
+    None => result_ty
+  }
+}
+
+///|
+fn fresh_enum_id(ctx : InferCtx) -> Int {
+  let id = ctx.next_enum_id
+  ctx.next_enum_id = ctx.next_enum_id + 1
+  id
 }
 
 ///|
@@ -1401,6 +1643,23 @@ fn match_pattern(pattern : Pattern, value : Value, env : Env) -> Env? {
 }
 
 ///|
+fn eval_enum_body(
+  decl : EnumDecl,
+  env : Env,
+  body : Expr,
+) -> Value raise MiniMLError {
+  let mut enum_env = env
+  for variant in decl.variants {
+    let value = match variant.payload {
+      Some(_) => CtorFuncValue(variant.name, 1, [])
+      None => VariantValue(variant.name, [])
+    }
+    enum_env = enum_env.extend(variant.name, value)
+  }
+  eval_expr(body, enum_env)
+}
+
+///|
 fn eval_binary(
   op : BinaryOp,
   lhs : Value,
@@ -1443,6 +1702,7 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
         BoolValue(false) => eval_expr(else_, env)
         _ => raise RuntimeError("if condition must be a bool")
       }
+    EnumExpr(decl, body) => eval_enum_body(decl, env, body)
     LetExpr(pattern, bound, body) => {
       let value = eval_expr(bound, env)
       match match_pattern(pattern, value, env) {
@@ -1594,6 +1854,7 @@ fn type_to_string_with(type_ : Type, printer : TypePrinter) -> String {
       }
       "\{elem_s} option"
     }
+    NamedType(name, _) => name
     TupleType(types) => {
       let items = types.map(t => type_to_string_with(t, printer)).join(" * ")
       "(\{items})"
@@ -1635,6 +1896,7 @@ fn prune_type(type_ : Type, ctx : InferCtx) -> Type {
       }
     FunType(arg, ret) => FunType(prune_type(arg, ctx), prune_type(ret, ctx))
     OptionType(elem) => OptionType(prune_type(elem, ctx))
+    NamedType(name, id) => NamedType(name, id)
     TupleType(types) => TupleType(types.map(fn(t) { prune_type(t, ctx) }))
     ListType(elem) => ListType(prune_type(elem, ctx))
     _ => type_
@@ -1648,6 +1910,7 @@ fn occurs_in(var_id : Int, type_ : Type, ctx : InferCtx) -> Bool {
     FunType(arg, ret) =>
       occurs_in(var_id, arg, ctx) || occurs_in(var_id, ret, ctx)
     OptionType(elem) => occurs_in(var_id, elem, ctx)
+    NamedType(_, _) => false
     TupleType(types) => {
       for t in types {
         if occurs_in(var_id, t, ctx) {
@@ -1678,6 +1941,20 @@ fn bind_type_var(
 }
 
 ///|
+fn named_type_conflict_message(
+  lhs_name : String,
+  lhs_id : Int,
+  rhs_name : String,
+  rhs_id : Int,
+) -> String {
+  if lhs_name == rhs_name && lhs_id != rhs_id {
+    "cannot unify distinct enum types `\{lhs_name}` and `\{rhs_name}` (same name, different scopes)"
+  } else {
+    "cannot unify `\{lhs_name}` with `\{rhs_name}`"
+  }
+}
+
+///|
 fn unify(
   type_a : Type,
   type_b : Type,
@@ -1695,6 +1972,9 @@ fn unify(
       unify(ret1, ret2, ctx)
     }
     (OptionType(a), OptionType(b)) => unify(a, b, ctx)
+    (NamedType(a, ida), NamedType(b, idb)) if a == b && ida == idb => ()
+    (NamedType(a, ida), NamedType(b, idb)) =>
+      raise TypeError(named_type_conflict_message(a, ida, b, idb))
     (TupleType(xs), TupleType(ys)) => {
       if xs.length() != ys.length() {
         raise TypeError("tuple lengths do not match")
@@ -1756,6 +2036,7 @@ fn ftv_type(type_ : Type, ctx : InferCtx) -> Array[Int] {
       vars
     }
     OptionType(elem) => ftv_type(elem, ctx)
+    NamedType(_, _) => []
     TupleType(types) => {
       let vars = Array::new()
       for t in types {
@@ -1807,6 +2088,7 @@ fn instantiate_type(
         instantiate_type(ret, mapping, ctx),
       )
     OptionType(elem) => OptionType(instantiate_type(elem, mapping, ctx))
+    NamedType(name, id) => NamedType(name, id)
     TupleType(types) =>
       TupleType(types.map(fn(t) { instantiate_type(t, mapping, ctx) }))
     ListType(elem) => ListType(instantiate_type(elem, mapping, ctx))
@@ -1830,6 +2112,25 @@ fn generalize(env : TypeEnv, type_ : Type, ctx : InferCtx) -> Scheme {
 }
 
 ///|
+fn lookup_enum_variant(
+  enum_id : Int,
+  ctor_name : String,
+  ctx : InferCtx,
+) -> EnumVariantDecl? {
+  match ctx.enum_defs.get(enum_id) {
+    Some(decl) => {
+      for variant in decl.variants {
+        if variant.name == ctor_name {
+          return Some(variant)
+        }
+      }
+      None
+    }
+    None => None
+  }
+}
+
+///|
 fn infer_pattern(
   pattern : Pattern,
   expected : Type,
@@ -1849,22 +2150,55 @@ fn infer_pattern(
     VarPat(name) =>
       env.extend(name, Scheme::{ vars: [], ty: prune_type(expected, ctx) })
     CtorPat(name, patterns) =>
-      match (name, patterns) {
-        ("None", []) => {
-          let elem_type = fresh_type_var(ctx)
-          unify(expected, OptionType(elem_type), ctx)
-          env
+      match ctx.ctor_to_enum.get(name) {
+        Some(enum_id) => {
+          let enum_name = match ctx.enum_defs.get(enum_id) {
+            Some(decl) => decl.name
+            None => raise TypeError("unknown constructor `\{name}`")
+          }
+          unify(expected, NamedType(enum_name, enum_id), ctx)
+          match lookup_enum_variant(enum_id, name, ctx) {
+            Some(variant) =>
+              match (variant.payload, patterns) {
+                (None, []) => env
+                (Some(payload), [inner]) => {
+                  let payload_type = resolve_decl_type(
+                    payload, enum_name, enum_id, ctx,
+                  )
+                  infer_pattern(inner, payload_type, env, ctx)
+                }
+                (None, _) =>
+                  raise TypeError(
+                    "constructor `\{name}` does not take pattern arguments",
+                  )
+                (Some(_), _) =>
+                  raise TypeError(
+                    "constructor `\{name}` expects exactly one pattern",
+                  )
+              }
+            None => raise TypeError("unknown constructor `\{name}`")
+          }
         }
-        ("Some", [inner]) => {
-          let elem_type = fresh_type_var(ctx)
-          unify(expected, OptionType(elem_type), ctx)
-          infer_pattern(inner, elem_type, env, ctx)
-        }
-        ("Some", _) =>
-          raise TypeError("constructor `Some` expects exactly one pattern")
-        ("None", _) =>
-          raise TypeError("constructor `None` does not take pattern arguments")
-        _ => raise TypeError("unknown constructor `\{name}`")
+        None =>
+          match (name, patterns) {
+            ("None", []) => {
+              let elem_type = fresh_type_var(ctx)
+              unify(expected, OptionType(elem_type), ctx)
+              env
+            }
+            ("Some", [inner]) => {
+              let elem_type = fresh_type_var(ctx)
+              unify(expected, OptionType(elem_type), ctx)
+              infer_pattern(inner, elem_type, env, ctx)
+            }
+            ("Some", _) =>
+              raise TypeError("constructor `Some` expects exactly one pattern")
+            ("None", _) =>
+              raise TypeError(
+                "constructor `None` does not take pattern arguments",
+              )
+            _ => raise TypeError("unknown constructor `\{name}`")
+          }
       }
     TuplePat(patterns) => {
       let element_types = Array::new()
@@ -1910,15 +2244,38 @@ fn bind_generalized_pattern(
     WildcardPat | IntPat(_) | BoolPat(_) | NilPat => env
     VarPat(name) => env.extend(name, generalize(base_env, expected, ctx))
     CtorPat(name, patterns) =>
-      match (name, patterns) {
-        ("None", []) => env
-        ("Some", [inner]) =>
-          match prune_type(expected, ctx) {
-            OptionType(elem) =>
-              bind_generalized_pattern(inner, elem, base_env, env, ctx)
+      match ctx.ctor_to_enum.get(name) {
+        Some(enum_id) =>
+          match ctx.enum_defs.get(enum_id) {
+            Some(decl) =>
+              match lookup_enum_variant(enum_id, name, ctx) {
+                Some(variant) =>
+                  match (variant.payload, patterns) {
+                    (Some(payload), [inner]) =>
+                      bind_generalized_pattern(
+                        inner,
+                        resolve_decl_type(payload, decl.name, enum_id, ctx),
+                        base_env,
+                        env,
+                        ctx,
+                      )
+                    _ => env
+                  }
+                None => env
+              }
+            None => env
+          }
+        None =>
+          match (name, patterns) {
+            ("None", []) => env
+            ("Some", [inner]) =>
+              match prune_type(expected, ctx) {
+                OptionType(elem) =>
+                  bind_generalized_pattern(inner, elem, base_env, env, ctx)
+                _ => env
+              }
             _ => env
           }
-        _ => env
       }
     TuplePat(patterns) =>
       match prune_type(expected, ctx) {
@@ -2050,6 +2407,12 @@ fn match_matrix_kind(ty : Type, ctx : InferCtx) -> MatchMatrixKind {
   match prune_type(ty, ctx) {
     BoolType => BoolKind
     OptionType(_) => OptionKind
+    NamedType(_, id) =>
+      if ctx.enum_defs.get(id) is Some(_) {
+        EnumKind(id)
+      } else {
+        UniversalKind
+      }
     TupleType(types) => TupleKind(types.length())
     ListType(_) => ListKind
     _ => UniversalKind
@@ -2120,6 +2483,38 @@ fn specialize_some_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
     } else {
       match head {
         CtorPat("Some", [inner]) => result.push(concat_patterns([inner], tail))
+        _ => ()
+      }
+    }
+  }
+  result
+}
+
+///|
+fn specialize_enum_rows(
+  rows : Array[Array[Pattern]],
+  ctor_name : String,
+  has_payload : Bool,
+) -> Array[Array[Pattern]] {
+  let result = Array::new()
+  for row in rows {
+    guard row.length() > 0 else { continue }
+    let head = row[0]
+    let tail = drop_first_pattern(row)
+    if pattern_is_wild(head) {
+      if has_payload {
+        result.push(concat_patterns([WildcardPat], tail))
+      } else {
+        result.push(tail)
+      }
+    } else {
+      match head {
+        CtorPat(name, patterns) if name == ctor_name =>
+          if has_payload && patterns.length() == 1 {
+            result.push(concat_patterns([patterns[0]], tail))
+          } else if !has_payload && patterns.is_empty() {
+            result.push(tail)
+          }
         _ => ()
       }
     }
@@ -2252,6 +2647,31 @@ fn patterns_cover_vector(
         }
         _ => false
       }
+    EnumKind(enum_id) =>
+      match ctx.enum_defs.get(enum_id) {
+        Some(decl) => {
+          for variant in decl.variants {
+            let rows2 = specialize_enum_rows(
+              rows,
+              variant.name,
+              variant.payload is Some(_),
+            )
+            let tys2 = match variant.payload {
+              Some(payload) =>
+                concat_types(
+                  [resolve_decl_type(payload, decl.name, enum_id, ctx)],
+                  tail_tys,
+                )
+              None => tail_tys
+            }
+            if !patterns_cover_vector(rows2, tys2, ctx) {
+              return false
+            }
+          }
+          true
+        }
+        None => false
+      }
     TupleKind(arity) =>
       match head_ty {
         TupleType(elem_tys) => {
@@ -2331,6 +2751,35 @@ fn useful_vector(
               )
             _ => false
           }
+        EnumKind(enum_id) =>
+          match ctx.enum_defs.get(enum_id) {
+            Some(decl) => {
+              for variant in decl.variants {
+                let next_rows = specialize_enum_rows(
+                  rows,
+                  variant.name,
+                  variant.payload is Some(_),
+                )
+                let next_vec = match variant.payload {
+                  Some(_) => concat_patterns([WildcardPat], tail_vec)
+                  None => tail_vec
+                }
+                let next_tys = match variant.payload {
+                  Some(payload) =>
+                    concat_types(
+                      [resolve_decl_type(payload, decl.name, enum_id, ctx)],
+                      tail_tys,
+                    )
+                  None => tail_tys
+                }
+                if useful_vector(next_rows, next_vec, next_tys, ctx) {
+                  return true
+                }
+              }
+              false
+            }
+            None => false
+          }
         TupleKind(arity) =>
           match head_ty {
             TupleType(elem_tys) =>
@@ -2359,20 +2808,55 @@ fn useful_vector(
       useful_vector(specialize_int_rows(rows, n), tail_vec, tail_tys, ctx)
     BoolPat(b) =>
       useful_vector(specialize_bool_rows(rows, b), tail_vec, tail_tys, ctx)
-    CtorPat("None", []) =>
-      useful_vector(specialize_none_rows(rows), tail_vec, tail_tys, ctx)
-    CtorPat("Some", [inner]) =>
-      match head_ty {
-        OptionType(elem_ty) =>
-          useful_vector(
-            specialize_some_rows(rows),
-            concat_patterns([inner], tail_vec),
-            concat_types([elem_ty], tail_tys),
-            ctx,
-          )
-        _ => false
+    CtorPat(name, patterns) =>
+      match ctx.ctor_to_enum.get(name) {
+        Some(enum_id) =>
+          match ctx.enum_defs.get(enum_id) {
+            Some(decl) =>
+              match lookup_enum_variant(enum_id, name, ctx) {
+                Some(variant) =>
+                  match (variant.payload, patterns) {
+                    (None, []) =>
+                      useful_vector(
+                        specialize_enum_rows(rows, name, false),
+                        tail_vec,
+                        tail_tys,
+                        ctx,
+                      )
+                    (Some(payload), [inner]) =>
+                      useful_vector(
+                        specialize_enum_rows(rows, name, true),
+                        concat_patterns([inner], tail_vec),
+                        concat_types(
+                          [resolve_decl_type(payload, decl.name, enum_id, ctx)],
+                          tail_tys,
+                        ),
+                        ctx,
+                      )
+                    _ => false
+                  }
+                None => false
+              }
+            None => false
+          }
+        None =>
+          match (name, patterns) {
+            ("None", []) =>
+              useful_vector(specialize_none_rows(rows), tail_vec, tail_tys, ctx)
+            ("Some", [inner]) =>
+              match head_ty {
+                OptionType(elem_ty) =>
+                  useful_vector(
+                    specialize_some_rows(rows),
+                    concat_patterns([inner], tail_vec),
+                    concat_types([elem_ty], tail_tys),
+                    ctx,
+                  )
+                _ => false
+              }
+            _ => false
+          }
       }
-    CtorPat(_, _) => false
     TuplePat(parts) =>
       match head_ty {
         TupleType(elem_tys) =>
@@ -2476,6 +2960,42 @@ fn find_missing_vector(
         }
         _ => None
       }
+    EnumKind(enum_id) =>
+      match ctx.enum_defs.get(enum_id) {
+        Some(decl) => {
+          for variant in decl.variants {
+            let rows2 = specialize_enum_rows(
+              rows,
+              variant.name,
+              variant.payload is Some(_),
+            )
+            let tys2 = match variant.payload {
+              Some(payload) =>
+                concat_types(
+                  [resolve_decl_type(payload, decl.name, enum_id, ctx)],
+                  tail_tys,
+                )
+              None => tail_tys
+            }
+            match find_missing_vector(rows2, tys2, ctx) {
+              Some(vec) =>
+                match variant.payload {
+                  Some(_) => {
+                    let rest = array_slice_patterns(vec, 1, vec.length())
+                    return Some(
+                      prepend_pattern(CtorPat(variant.name, [vec[0]]), rest),
+                    )
+                  }
+                  None =>
+                    return Some(prepend_pattern(CtorPat(variant.name, []), vec))
+                }
+              None => ()
+            }
+          }
+          None
+        }
+        None => None
+      }
     TupleKind(arity) =>
       match head_ty {
         TupleType(elem_tys) => {
@@ -2551,6 +3071,49 @@ fn check_match_exhaustiveness(
 }
 
 ///|
+fn infer_enum_body(
+  decl : EnumDecl,
+  body : Expr,
+  env : TypeEnv,
+  ctx : InferCtx,
+) -> Type raise MiniMLError {
+  let enum_id = fresh_enum_id(ctx)
+  let old_type_binding = ctx.type_name_to_enum.get(decl.name)
+  ctx.enum_defs.set(enum_id, decl)
+  ctx.type_name_to_enum.set(decl.name, enum_id)
+  let old_ctor_enums = Array::new()
+  let mut body_env = env
+  for variant in decl.variants {
+    old_ctor_enums.push((variant.name, ctx.ctor_to_enum.get(variant.name)))
+    ctx.ctor_to_enum.set(variant.name, enum_id)
+    body_env = body_env.extend(variant.name, Scheme::{
+      vars: [],
+      ty: enum_ctor_type(decl.name, enum_id, variant, ctx),
+    })
+  }
+  let result = infer_expr(body, body_env, ctx)
+  let _ = ctx.enum_defs.remove(enum_id)
+  match old_type_binding {
+    Some(prev_id) => ctx.type_name_to_enum.set(decl.name, prev_id)
+    None => {
+      let _ = ctx.type_name_to_enum.remove(decl.name)
+    }
+  }
+  for entry in old_ctor_enums {
+    match entry {
+      (ctor_name, prev_enum) =>
+        match prev_enum {
+          Some(enum_name) => ctx.ctor_to_enum.set(ctor_name, enum_name)
+          None => {
+            let _ = ctx.ctor_to_enum.remove(ctor_name)
+          }
+        }
+    }
+  }
+  result
+}
+
+///|
 fn infer_expr(
   expr : Expr,
   env : TypeEnv,
@@ -2568,6 +3131,7 @@ fn infer_expr(
       unify(then_type, else_type, ctx)
       prune_type(then_type, ctx)
     }
+    EnumExpr(decl, body) => infer_enum_body(decl, body, env, ctx)
     LetExpr(pattern, bound, body) => {
       let bound_type = infer_expr(bound, env, ctx)
       let checked_type = prune_type(bound_type, ctx)

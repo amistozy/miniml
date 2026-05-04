@@ -187,3 +187,89 @@ test "redundant option arm is rejected" {
   }
   assert_eq(msg, "redundant match arm `None`")
 }
+
+///|
+test "parse local enum expression" {
+  let expr = parse(
+    "enum Maybe = None | Some(int) in match Some 1 with | Some x -> x | None -> 0",
+  )
+  match expr {
+    EnumExpr(decl, MatchExpr(ApplyExpr(VarExpr("Some"), IntExpr(1)), arms)) => {
+      assert_eq(decl.name, "Maybe")
+      assert_eq(decl.variants.length(), 2)
+      assert_eq(decl.variants[0].name, "None")
+      assert_true(decl.variants[0].payload is None)
+      assert_eq(decl.variants[1].name, "Some")
+      assert_true(decl.variants[1].payload is Some(IntDeclType))
+      assert_true(arms[0].pattern is CtorPat("Some", [VarPat("x")]))
+      assert_true(arms[1].pattern is CtorPat("None", []))
+    }
+    _ => assert_true(false)
+  }
+}
+
+///|
+test "non exhaustive user enum hint is human readable" {
+  let msg = try {
+    let _ = infer(
+      "enum Traffic = Red | Yellow | Green in match Red with | Red -> 0 | Yellow -> 1",
+    )
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "non-exhaustive match, missing pattern `Green`")
+}
+
+///|
+test "redundant user enum arm is rejected" {
+  let msg = try {
+    let _ = infer(
+      "enum Traffic = Red | Yellow in match Red with | _ -> 0 | Yellow -> 1",
+    )
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "redundant match arm `Yellow`")
+}
+
+///|
+test "enum constructors are scoped locally" {
+  let msg = try {
+    let _ = infer("enum Traffic = Red | Yellow in Red")
+    let _ = infer("Red")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "unbound variable `Red`")
+}
+
+///|
+test "same enum name in different scopes stays nominally distinct" {
+  let code =
+    #| let f =
+    #|   enum Traffic = Red | Yellow | Green in
+    #|   fun light ->
+    #|     match light with
+    #|     | Red -> 0
+    #|     | Yellow -> 1
+    #|     | Green -> 2
+    #| in
+    #| enum Traffic = Foo in
+    #| f Foo
+  let msg = try {
+    let _ = infer(code)
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(
+    msg, "cannot unify distinct enum types `Traffic` and `Traffic` (same name, different scopes)",
+  )
+}
