@@ -14,8 +14,39 @@ test "parse tuple let pattern" {
     expr
     is LetExpr(
       TuplePat([VarPat("x"), VarPat("y")]),
+      None,
       TupleExpr([IntExpr(1), IntExpr(2)]),
       VarExpr("x")
+    ),
+  )
+}
+
+///|
+test "tokenize type annotation colon" {
+  let tokens = tokenize("fun (x : int) -> x")
+  assert_eq(tokens[3], ColonTok)
+}
+
+///|
+test "parse annotated fun binder" {
+  let expr = parse("fun (x : int option) -> x")
+  assert_true(
+    expr is FunExpr("x", Some(OptionDeclType(IntDeclType)), VarExpr("x")),
+  )
+}
+
+///|
+test "parse annotated let rec" {
+  let expr = parse("let rec sum (xs : int list) : int = 0 in sum")
+  assert_true(
+    expr
+    is LetRecExpr(
+      "sum",
+      "xs",
+      Some(ListDeclType(IntDeclType)),
+      Some(IntDeclType),
+      IntExpr(0),
+      VarExpr("sum")
     ),
   )
 }

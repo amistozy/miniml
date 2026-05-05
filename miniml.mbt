@@ -38,6 +38,7 @@ pub(all) enum Token {
   LBracketTok
   RBracketTok
   ArrowTok
+  ColonTok
   EqTok
   PlusTok
   MinusTok
@@ -81,6 +82,7 @@ pub impl Show for Token with output(self, logger) {
     LBracketTok => "["
     RBracketTok => "]"
     ArrowTok => "->"
+    ColonTok => ":"
     EqTok => "="
     PlusTok => "+"
     MinusTok => "-"
@@ -170,6 +172,7 @@ pub(all) enum DeclType {
   NamedDeclType(String, Array[DeclType])
   TupleDeclType(Array[DeclType])
   ListDeclType(DeclType)
+  OptionDeclType(DeclType)
 }
 
 ///|
@@ -192,9 +195,9 @@ pub(all) enum Expr {
   VarExpr(String)
   IfExpr(Expr, Expr, Expr)
   EnumExpr(EnumDecl, Expr)
-  LetExpr(Pattern, Expr, Expr)
-  LetRecExpr(String, String, Expr, Expr)
-  FunExpr(String, Expr)
+  LetExpr(Pattern, DeclType?, Expr, Expr)
+  LetRecExpr(String, String, DeclType?, DeclType?, Expr, Expr)
+  FunExpr(String, DeclType?, Expr)
   ApplyExpr(Expr, Expr)
   BinaryExpr(BinaryOp, Expr, Expr)
   NegExpr(Expr)
@@ -293,11 +296,23 @@ fn expr_to_string(expr : Expr) -> String {
       "if \{expr_to_string(cond)} then \{expr_to_string(then_)} else \{expr_to_string(else_)}"
     EnumExpr(decl, body) =>
       "enum \{enum_decl_to_string(decl)} in \{expr_to_string(body)}"
-    LetExpr(pattern, bound, body) =>
-      "let \{pattern_to_string(pattern)} = \{expr_to_string(bound)} in \{expr_to_string(body)}"
-    LetRecExpr(name, param, fun_body, body) =>
-      "let rec \{name} \{param} = \{expr_to_string(fun_body)} in \{expr_to_string(body)}"
-    FunExpr(param, body) => "fun \{param} -> \{expr_to_string(body)}"
+    LetExpr(pattern, annot, bound, body) => {
+      let annot_s = match annot {
+        Some(type_) => " : \{decl_type_to_string(type_)}"
+        None => ""
+      }
+      "let \{pattern_to_string(pattern)}\{annot_s} = \{expr_to_string(bound)} in \{expr_to_string(body)}"
+    }
+    LetRecExpr(name, param, param_annot, return_annot, fun_body, body) => {
+      let param_s = binder_to_string(param, param_annot)
+      let return_s = match return_annot {
+        Some(type_) => " : \{decl_type_to_string(type_)}"
+        None => ""
+      }
+      "let rec \{name} \{param_s}\{return_s} = \{expr_to_string(fun_body)} in \{expr_to_string(body)}"
+    }
+    FunExpr(param, annot, body) =>
+      "fun \{binder_to_string(param, annot)} -> \{expr_to_string(body)}"
     ApplyExpr(func, arg) => "(\{expr_to_string(func)} \{expr_to_string(arg)})"
     BinaryExpr(op, lhs, rhs) =>
       "(\{expr_to_string(lhs)} \{op.to_string()} \{expr_to_string(rhs)})"
@@ -352,6 +367,21 @@ fn decl_type_to_string(type_ : DeclType) -> String {
       }
       "\{elem_s} list"
     }
+    OptionDeclType(elem) => {
+      let elem_s = match elem {
+        TupleDeclType(_) => "(\{decl_type_to_string(elem)})"
+        _ => decl_type_to_string(elem)
+      }
+      "\{elem_s} option"
+    }
+  }
+}
+
+///|
+fn binder_to_string(name : String, annot : DeclType?) -> String {
+  match annot {
+    Some(type_) => "(\{name} : \{decl_type_to_string(type_)})"
+    None => name
   }
 }
 
@@ -715,6 +745,10 @@ pub fn tokenize(code : String) -> Array[Token] raise MiniMLError {
       }
       ['[', .. next] => {
         tokens.push(LBracketTok)
+        rest = next
+      }
+      [':', .. next] => {
+        tokens.push(ColonTok)
         rest = next
       }
       [']', .. next] => {
@@ -1454,10 +1488,58 @@ fn parse_decl_type_atom(
 fn parse_decl_type(
   tokens : ArrayView[Token],
 ) -> (DeclType, ArrayView[Token]) raise MiniMLError {
-  let (base, rest) = parse_decl_type_atom(tokens)
-  match rest {
-    [IdentTok("list"), .. rest2] => (ListDeclType(base), rest2)
-    _ => (base, rest)
+  let mut current = tokens
+  let (base, rest) = parse_decl_type_atom(current)
+  let mut result = base
+  current = rest
+  while true {
+    match current {
+      [IdentTok("list"), .. rest2] => {
+        result = ListDeclType(result)
+        current = rest2
+      }
+      [IdentTok("option"), .. rest2] => {
+        result = OptionDeclType(result)
+        current = rest2
+      }
+      _ => break
+    }
+  }
+  (result, current)
+}
+
+///|
+fn parse_type_annotation(
+  tokens : ArrayView[Token],
+) -> (DeclType?, ArrayView[Token]) raise MiniMLError {
+  match tokens {
+    [ColonTok, .. rest] => {
+      let (type_, rest2) = parse_decl_type(rest)
+      (Some(type_), rest2)
+    }
+    _ => (None, tokens)
+  }
+}
+
+///|
+fn parse_binder(
+  tokens : ArrayView[Token],
+) -> (String, DeclType?, ArrayView[Token]) raise MiniMLError {
+  match tokens {
+    [LParenTok, .. rest] => {
+      let (name, rest2) = expect_ident(rest)
+      let (annot, rest3) = parse_type_annotation(rest2)
+      guard annot is Some(_) else {
+        raise ParseError("expected type annotation in parenthesized binder")
+      }
+      let rest4 = expect_token(rest3, RParenTok)
+      (name, annot, rest4)
+    }
+    _ => {
+      let (name, rest) = expect_ident(tokens)
+      let (annot, rest2) = parse_type_annotation(rest)
+      (name, annot, rest2)
+    }
   }
 }
 
@@ -1567,10 +1649,10 @@ fn parse_fun(
   if tok != FunTok {
     return parse_match(tokens)
   }
-  let (param, rest2) = expect_ident(rest)
+  let (param, annot, rest2) = parse_binder(rest)
   let rest3 = expect_token(rest2, ArrowTok)
   let (body, rest4) = parse_expr(rest3)
-  (FunExpr(param, body), rest4)
+  (FunExpr(param, annot, body), rest4)
 }
 
 ///|
@@ -1606,19 +1688,21 @@ fn parse_let(
   }
   if tok2 == RecTok {
     let (name, rest3) = expect_ident(rest2)
-    let (param, rest4) = expect_ident(rest3)
+    let (param, param_annot, rest4) = parse_binder(rest3)
+    let (return_annot, rest5) = parse_type_annotation(rest4)
+    let rest6 = expect_token(rest5, EqTok)
+    let (fun_body, rest7) = parse_expr(rest6)
+    let rest8 = expect_token(rest7, InTok)
+    let (body, rest9) = parse_expr(rest8)
+    (LetRecExpr(name, param, param_annot, return_annot, fun_body, body), rest9)
+  } else {
+    let (pattern, rest3) = parse_pattern(rest)
+    let (annot, rest4) = parse_type_annotation(rest3)
     let rest5 = expect_token(rest4, EqTok)
     let (fun_body, rest6) = parse_expr(rest5)
     let rest7 = expect_token(rest6, InTok)
     let (body, rest8) = parse_expr(rest7)
-    (LetRecExpr(name, param, fun_body, body), rest8)
-  } else {
-    let (pattern, rest3) = parse_pattern(rest)
-    let rest4 = expect_token(rest3, EqTok)
-    let (bound, rest5) = parse_expr(rest4)
-    let rest6 = expect_token(rest5, InTok)
-    let (body, rest7) = parse_expr(rest6)
-    (LetExpr(pattern, bound, body), rest7)
+    (LetExpr(pattern, annot, fun_body, body), rest8)
   }
 }
 
@@ -1714,6 +1798,35 @@ fn resolve_decl_type(
       )
     ListDeclType(elem) =>
       ListType(resolve_decl_type(elem, enum_name, enum_id, type_params, ctx))
+    OptionDeclType(elem) =>
+      OptionType(resolve_decl_type(elem, enum_name, enum_id, type_params, ctx))
+  }
+}
+
+///|
+fn resolve_annotation_type(
+  type_ : DeclType,
+  ctx : InferCtx,
+) -> Type raise MiniMLError {
+  match type_ {
+    IntDeclType => IntType
+    BoolDeclType => BoolType
+    TypeVarDeclType(name) =>
+      raise TypeError("type annotation cannot use free type variable `\{name}`")
+    NamedDeclType(name, args) =>
+      match ctx.type_name_to_enum.get(name) {
+        Some(enum_id) =>
+          NamedType(
+            name,
+            enum_id,
+            args.map(arg => resolve_annotation_type(arg, ctx)),
+          )
+        None => raise TypeError("unknown type `\{name}`")
+      }
+    TupleDeclType(types) =>
+      TupleType(types.map(type_ => resolve_annotation_type(type_, ctx)))
+    ListDeclType(elem) => ListType(resolve_annotation_type(elem, ctx))
+    OptionDeclType(elem) => OptionType(resolve_annotation_type(elem, ctx))
   }
 }
 
@@ -1891,21 +2004,21 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
         _ => raise RuntimeError("if condition must be a bool")
       }
     EnumExpr(decl, body) => eval_enum_body(decl, env, body)
-    LetExpr(pattern, bound, body) => {
+    LetExpr(pattern, _, bound, body) => {
       let value = eval_expr(bound, env)
       match match_pattern(pattern, value, env) {
         Some(next_env) => eval_expr(body, next_env)
         None => raise RuntimeError("let pattern match failed")
       }
     }
-    LetRecExpr(name, param, fun_body, body) => {
+    LetRecExpr(name, param, _, _, fun_body, body) => {
       let cell : Ref[Value?] = @ref.new(None)
       let rec_env = env.extend_cell(name, cell)
       let closure = ClosureValue(param, fun_body, rec_env)
       cell.val = Some(closure)
       eval_expr(body, rec_env)
     }
-    FunExpr(param, body) => ClosureValue(param, body, env)
+    FunExpr(param, _, body) => ClosureValue(param, body, env)
     ApplyExpr(func, arg) => {
       let func_value = eval_expr(func, env)
       let arg_value = eval_expr(arg, env)
@@ -3447,8 +3560,15 @@ fn infer_expr(
       prune_type(then_type, ctx)
     }
     EnumExpr(decl, body) => infer_enum_body(decl, body, env, ctx)
-    LetExpr(pattern, bound, body) => {
+    LetExpr(pattern, annot, bound, body) => {
       let bound_type = infer_expr(bound, env, ctx)
+      match annot {
+        Some(type_) => {
+          let expected = resolve_annotation_type(type_, ctx)
+          unify(bound_type, expected, ctx)
+        }
+        None => ()
+      }
       let checked_type = prune_type(bound_type, ctx)
       let _ = infer_pattern(pattern, checked_type, env, ctx)
       let body_env = bind_generalized_pattern(
@@ -3456,9 +3576,15 @@ fn infer_expr(
       )
       infer_expr(body, body_env, ctx)
     }
-    LetRecExpr(name, param, fun_body, body) => {
-      let arg_type = fresh_type_var(ctx)
-      let ret_type = fresh_type_var(ctx)
+    LetRecExpr(name, param, param_annot, return_annot, fun_body, body) => {
+      let arg_type = match param_annot {
+        Some(type_) => resolve_annotation_type(type_, ctx)
+        None => fresh_type_var(ctx)
+      }
+      let ret_type = match return_annot {
+        Some(type_) => resolve_annotation_type(type_, ctx)
+        None => fresh_type_var(ctx)
+      }
       let func_type = FunType(arg_type, ret_type)
       let env1 = env.extend(name, Scheme::{ vars: [], ty: func_type })
       let env2 = env1.extend(param, Scheme::{ vars: [], ty: arg_type })
@@ -3469,8 +3595,11 @@ fn infer_expr(
       let env3 = env.extend(name, scheme)
       infer_expr(body, env3, ctx)
     }
-    FunExpr(param, body) => {
-      let arg_type = fresh_type_var(ctx)
+    FunExpr(param, annot, body) => {
+      let arg_type = match annot {
+        Some(type_) => resolve_annotation_type(type_, ctx)
+        None => fresh_type_var(ctx)
+      }
       let env2 = env.extend(param, Scheme::{ vars: [], ty: arg_type })
       let body_type = infer_expr(body, env2, ctx)
       FunType(prune_type(arg_type, ctx), prune_type(body_type, ctx))

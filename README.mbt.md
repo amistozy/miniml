@@ -25,6 +25,7 @@ The current language supports:
 - local enum declarations: `enum T = ... in expr`
 - parameterized enums: `enum Option[a] = None | Some(a) in ...`
 - direct multi-argument variants: `RGB(1, 2, 3)`
+- optional type annotations on `let`, `let rec`, and `fun`
 
 ## Examples
 
@@ -84,6 +85,17 @@ match Box((1, true)) with
 
 `Box((x, y))` means a single tuple payload.
 `Box(x, y)` means a variant with two separate fields.
+
+Type annotations:
+
+```ml
+let rec sum (xs : int list) : int =
+  match xs with
+  | [] -> 0
+  | x :: rest -> x + sum rest
+in
+sum [1, 2, 3]
+```
 
 ## CLI
 

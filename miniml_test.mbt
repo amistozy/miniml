@@ -207,3 +207,51 @@ test "recursive parameterized enum infers recursive function type" {
     #| length
   assert_eq(@miniml.infer(code), "List['t0] -> int")
 }
+
+///|
+test "annotated let binding evaluates" {
+  let code = "let answer : int = 42 in answer"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "annotated function parameter constrains inference" {
+  let code = "fun (x : int option) -> match x with | Some y -> y | None -> 0"
+  assert_eq(@miniml.infer(code), "int option -> int")
+}
+
+///|
+test "annotated recursive function evaluates" {
+  let code =
+    #| let rec sum (xs : int list) : int =
+    #|   match xs with
+    #|   | [] -> 0
+    #|   | x :: rest -> x + sum rest
+    #| in
+    #| sum [1, 2, 3, 4]
+  assert_eq(@miniml.interpret(code), "10")
+}
+
+///|
+test "annotation mismatch is rejected" {
+  let msg = try {
+    let _ = @miniml.infer("let x : bool = 1 in x")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "cannot unify int with bool")
+}
+
+///|
+test "free type variable annotation is rejected" {
+  let msg = try {
+    let _ = @miniml.infer("fun (x : a) -> x")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "type annotation cannot use free type variable `a`")
+}

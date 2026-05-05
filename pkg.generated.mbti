@@ -49,6 +49,7 @@ pub(all) enum DeclType {
   NamedDeclType(String, Array[DeclType])
   TupleDeclType(Array[DeclType])
   ListDeclType(DeclType)
+  OptionDeclType(DeclType)
 }
 
 pub(all) struct EnumDecl {
@@ -73,9 +74,9 @@ pub(all) enum Expr {
   VarExpr(String)
   IfExpr(Expr, Expr, Expr)
   EnumExpr(EnumDecl, Expr)
-  LetExpr(Pattern, Expr, Expr)
-  LetRecExpr(String, String, Expr, Expr)
-  FunExpr(String, Expr)
+  LetExpr(Pattern, DeclType?, Expr, Expr)
+  LetRecExpr(String, String, DeclType?, DeclType?, Expr, Expr)
+  FunExpr(String, DeclType?, Expr)
   ApplyExpr(Expr, Expr)
   BinaryExpr(BinaryOp, Expr, Expr)
   NegExpr(Expr)
@@ -131,6 +132,7 @@ pub(all) enum Token {
   LBracketTok
   RBracketTok
   ArrowTok
+  ColonTok
   EqTok
   PlusTok
   MinusTok
