@@ -2328,11 +2328,7 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
           eval_expr(body, call_env)
         }
         CtorFuncValue(name, arity, values) => {
-          let next_values = Array::new()
-          for value in values {
-            next_values.push(value)
-          }
-          next_values.push(arg_value)
+          let next_values = [..values, arg_value]
           if next_values.length() == arity {
             VariantValue(name, next_values)
           } else {
@@ -2369,7 +2365,7 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
     }
     NegExpr(inner) =>
       match eval_expr(inner, env) {
-        IntValue(n) => IntValue(0 - n)
+        IntValue(n) => IntValue(-n)
         _ => raise RuntimeError("unary - expects an int")
       }
     NotExpr(inner) =>
@@ -2378,17 +2374,11 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
         _ => raise RuntimeError("unary ! expects a bool")
       }
     TupleExpr(exprs) => {
-      let values = Array::new()
-      for expr in exprs {
-        values.push(eval_expr(expr, env))
-      }
+      let values = exprs.map(expr => eval_expr(expr, env))
       TupleValue(values)
     }
     ListExpr(exprs) => {
-      let values = Array::new()
-      for expr in exprs {
-        values.push(eval_expr(expr, env))
-      }
+      let values = exprs.map(expr => eval_expr(expr, env))
       list_from_values(values)
     }
     ConsExpr(head, tail) => {
@@ -2629,19 +2619,8 @@ fn append_unique(dst : Array[Int], src : Array[Int]) -> Unit {
 
 ///|
 fn diff_vars(lhs : Array[Int], rhs : Array[Int]) -> Array[Int] {
-  let result = Array::new()
-  for value in lhs {
-    let mut found = false
-    for other in rhs {
-      if value == other {
-        found = true
-      }
-    }
-    if !found {
-      result.push(value)
-    }
-  }
-  result
+  let rhs_set = Set::from_array(rhs)
+  lhs.filter(x => !rhs_set.contains(x))
 }
 
 ///|
@@ -2997,31 +2976,17 @@ fn pattern_is_wild(pattern : Pattern) -> Bool {
 
 ///|
 fn row_is_all_wild(row : Array[Pattern]) -> Bool {
-  for pattern in row {
-    if !pattern_is_wild(pattern) {
-      return false
-    }
-  }
-  true
+  row.all(pattern_is_wild)
 }
 
 ///|
 fn drop_first_pattern(row : Array[Pattern]) -> Array[Pattern] {
-  let rest = Array::new()
-  for i = 1; i < row.length(); i = i + 1 {
-    rest.push(row[i])
-  }
-  rest
+  row[1:].to_owned()
 }
 
 ///|
 fn prepend_pattern(pattern : Pattern, rest : Array[Pattern]) -> Array[Pattern] {
-  let result = Array::new()
-  result.push(pattern)
-  for pat in rest {
-    result.push(pat)
-  }
-  result
+  [pattern, ..rest]
 }
 
 ///|
@@ -3030,20 +2995,12 @@ fn array_slice_patterns(
   start : Int,
   end_ : Int,
 ) -> Array[Pattern] {
-  let result = Array::new()
-  for i = start; i < end_; i = i + 1 {
-    result.push(patterns[i])
-  }
-  result
+  patterns[start:end_].to_owned()
 }
 
 ///|
 fn array_slice_types(types : Array[Type], start : Int) -> Array[Type] {
-  let result = Array::new()
-  for i = start; i < types.length(); i = i + 1 {
-    result.push(types[i])
-  }
-  result
+  types[start:].to_owned()
 }
 
 ///|
@@ -3051,37 +3008,17 @@ fn concat_patterns(
   left : Array[Pattern],
   right : Array[Pattern],
 ) -> Array[Pattern] {
-  let result = Array::new()
-  for pat in left {
-    result.push(pat)
-  }
-  for pat in right {
-    result.push(pat)
-  }
-  result
+  [..left, ..right]
 }
 
 ///|
 fn concat_types(left : Array[Type], right : Array[Type]) -> Array[Type] {
-  let result = Array::new()
-  for ty in left {
-    result.push(ty)
-  }
-  for ty in right {
-    result.push(ty)
-  }
-  result
+  [..left, ..right]
 }
 
 ///|
 fn wildcard_patterns(count : Int) -> Array[Pattern] {
-  let result = Array::new()
-  let mut i = 0
-  while i < count {
-    result.push(WildcardPat)
-    i = i + 1
-  }
-  result
+  [WildcardPat].repeat(count)
 }
 
 ///|
