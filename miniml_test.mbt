@@ -303,9 +303,32 @@ test "multi parameter fun inference nests arrows" {
 }
 
 ///|
+test "fun pattern parameter evaluates via let destructuring" {
+  let code = "(fun (x, y) -> x + y) (20, 22)"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "fun pattern parameter infers from tuple argument" {
+  assert_eq(@miniml.infer("fun (x, _) -> x"), "('t0 * 't1) -> 't0")
+}
+
+///|
 test "let function sugar evaluates" {
   let code = "let add x y = x + y in add 19 23"
   assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "let function sugar supports pattern parameter" {
+  let code = "let fst (x, _) = x in fst (42, false)"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "let function sugar pattern parameter constrains function type" {
+  let code = "let swap ((x, y), z) = (z, x, y) in swap"
+  assert_eq(@miniml.infer(code), "(('t0 * 't1) * 't2) -> ('t2 * 't0 * 't1)")
 }
 
 ///|
@@ -322,6 +345,22 @@ test "multi parameter let rec evaluates" {
     #| in
     #| pow 2 5
   assert_eq(@miniml.interpret(code), "32")
+}
+
+///|
+test "let rec supports pattern parameter" {
+  let code =
+    #| let rec sum_pair (x, y) =
+    #|   if y == 0 then x else sum_pair (x + 1, y - 1)
+    #| in
+    #| sum_pair (20, 22)
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "let rec pattern parameter infers from tuple argument" {
+  let code = "let rec fst_pair (x, _) = x in fst_pair"
+  assert_eq(@miniml.infer(code), "('t0 * 't1) -> 't0")
 }
 
 ///|

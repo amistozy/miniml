@@ -300,7 +300,8 @@ priv struct TypePrinter {
 
 ///|
 priv struct FnParam {
-  name : String
+  pattern : Pattern
+  binder : String
   annot : DeclType?
 }
 
@@ -454,17 +455,23 @@ fn binder_to_string(name : String, annot : DeclType?) -> String {
 }
 
 ///|
-fn is_binder_start(token : Token) -> Bool {
-  match token {
-    IdentTok(_) | LParenTok => true
-    _ => false
+fn is_param_start(token : Token) -> Bool {
+  is_pattern_atom_start(token)
+}
+
+///|
+fn param_body(param : FnParam, body : Expr) -> Expr {
+  match (param.pattern, param.annot) {
+    (VarPat(name), None) if name == param.binder => body
+    (VarPat(name), Some(_)) if name == param.binder => body
+    _ => LetExpr(param.pattern, None, VarExpr(param.binder), body)
   }
 }
 
 ///|
 fn params_to_expr(params : ArrayView[FnParam], body : Expr) -> Expr {
   params.rev_fold(init=body, (acc, param) => {
-    FunExpr(param.name, param.annot, acc)
+    FunExpr(param.binder, param.annot, param_body(param, acc))
   })
 }
 
@@ -484,15 +491,16 @@ fn make_rec_binding(
   fun_body0 : Expr,
 ) -> RecBinding {
   guard params is [first, .. tail]
-  let fun_body = if tail.is_empty() {
+  let inner_body = if tail.is_empty() {
     fun_body0
   } else {
     params_to_expr(tail, ascribe_if_needed(fun_body0, return_annot))
   }
+  let fun_body = param_body(first, inner_body)
   let outer_return_annot = if tail.is_empty() { return_annot } else { None }
   RecBinding::{
     name,
-    param: first.name,
+    param: first.binder,
     param_annot: first.annot,
     return_annot: outer_return_annot,
     fun_body,
@@ -1603,15 +1611,40 @@ fn parse_binder(
 }
 
 ///|
-fn parse_binder_list(
+fn fresh_param_name(tokens : ArrayView[Token]) -> String {
+  "$param\{tokens.length()}"
+}
+
+///|
+fn parse_param(
+  tokens : ArrayView[Token],
+) -> (FnParam, ArrayView[Token]) raise MiniMLError {
+  match tokens {
+    [LParenTok, IdentTok(_), ColonTok, ..] | [IdentTok(_), ColonTok, ..] => {
+      let (name, annot, rest) = parse_binder(tokens)
+      (FnParam::{ pattern: VarPat(name), binder: name, annot }, rest)
+    }
+    _ => {
+      let (pattern, rest) = parse_pattern(tokens)
+      let binder = match pattern {
+        VarPat(name) => name
+        _ => fresh_param_name(tokens)
+      }
+      (FnParam::{ pattern, binder, annot: None }, rest)
+    }
+  }
+}
+
+///|
+fn parse_param_list(
   tokens : ArrayView[Token],
 ) -> (Array[FnParam], ArrayView[Token]) raise MiniMLError {
   let params = []
   for current = tokens {
     match current {
-      [tok, ..] if is_binder_start(tok) => {
-        let (name, annot, rest) = parse_binder(current)
-        params.push(FnParam::{ name, annot })
+      [tok, ..] if is_param_start(tok) => {
+        let (param, rest) = parse_param(current)
+        params.push(param)
         continue rest
       }
       _ => {
@@ -1629,7 +1662,7 @@ fn parse_rec_binding(
   name : String,
   tokens : ArrayView[Token],
 ) -> (RecBinding, ArrayView[Token]) raise MiniMLError {
-  let (params, rest0) = parse_binder_list(tokens)
+  let (params, rest0) = parse_param_list(tokens)
   let (return_annot, rest1) = parse_type_annotation(rest0)
   let rest2 = expect_token(rest1, EqTok)
   let (fun_body0, rest3) = parse_expr(rest2)
@@ -1642,8 +1675,8 @@ fn parse_nonrec_binding(
   tokens : ArrayView[Token],
 ) -> (LetBinding, ArrayView[Token]) raise MiniMLError {
   match (pattern, tokens) {
-    (VarPat(name), [tok, ..]) if is_binder_start(tok) => {
-      let (params, rest0) = parse_binder_list(tokens)
+    (VarPat(name), [tok, ..]) if is_param_start(tok) => {
+      let (params, rest0) = parse_param_list(tokens)
       let (return_annot, rest1) = parse_type_annotation(rest0)
       let rest2 = expect_token(rest1, EqTok)
       let (fun_body0, rest3) = parse_expr(rest2)
@@ -1764,7 +1797,7 @@ fn parse_fun(
   if tok != FunTok {
     return parse_match(tokens)
   }
-  let (params, rest2) = parse_binder_list(rest)
+  let (params, rest2) = parse_param_list(rest)
   let rest3 = expect_token(rest2, ArrowTok)
   let (body, rest4) = parse_expr(rest3)
   (params_to_expr(params, body), rest4)

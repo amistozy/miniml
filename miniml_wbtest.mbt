@@ -104,6 +104,24 @@ test "parse multi parameter fun desugars to nested funs" {
 }
 
 ///|
+test "parse fun tuple pattern parameter desugars through let" {
+  let expr = parse("fun (x, y) -> x")
+  match expr {
+    FunExpr(
+      param,
+      None,
+      LetExpr(
+        TuplePat([VarPat("x"), VarPat("y")]),
+        None,
+        VarExpr(arg),
+        VarExpr("x")
+      )
+    ) => assert_eq(param, arg)
+    _ => assert_true(false)
+  }
+}
+
+///|
 test "parse let function sugar desugars to nested funs" {
   let expr = parse("let add x y = x + y in add")
   assert_true(
@@ -119,6 +137,29 @@ test "parse let function sugar desugars to nested funs" {
       VarExpr("add")
     ),
   )
+}
+
+///|
+test "parse let function sugar with pattern parameter desugars through let" {
+  let expr = parse("let fst (x, _) = x in fst")
+  match expr {
+    LetExpr(
+      VarPat("fst"),
+      None,
+      FunExpr(
+        param,
+        None,
+        LetExpr(
+          TuplePat([VarPat("x"), WildcardPat]),
+          None,
+          VarExpr(arg),
+          VarExpr("x")
+        )
+      ),
+      VarExpr("fst")
+    ) => assert_eq(param, arg)
+    _ => assert_true(false)
+  }
 }
 
 ///|
@@ -139,6 +180,27 @@ test "parse multi parameter let rec with return annotation" {
       VarExpr("add")
     ),
   )
+}
+
+///|
+test "parse let rec tuple pattern parameter desugars through let" {
+  let expr = parse("let rec fst (x, _) = x in fst")
+  match expr {
+    LetRecExpr(
+      "fst",
+      param,
+      None,
+      None,
+      LetExpr(
+        TuplePat([VarPat("x"), WildcardPat]),
+        None,
+        VarExpr(arg),
+        VarExpr("x")
+      ),
+      VarExpr("fst")
+    ) => assert_eq(param, arg)
+    _ => assert_true(false)
+  }
 }
 
 ///|

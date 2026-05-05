@@ -14,7 +14,7 @@ pub fn interpret(String) -> String raise MiniMLError
 
 pub fn parse(String) -> Expr raise MiniMLError
 
-pub fn tokenize(String) -> Array[Token] raise MiniMLError
+pub fn tokenize(String) -> ArrayView[Token] raise MiniMLError
 
 // Errors
 pub suberror MiniMLError {
