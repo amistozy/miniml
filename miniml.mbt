@@ -279,6 +279,12 @@ priv struct TypePrinter {
 }
 
 ///|
+priv struct FnParam {
+  name : String
+  annot : DeclType?
+}
+
+///|
 priv enum MatchMatrixKind {
   BoolKind
   OptionKind
@@ -393,6 +399,34 @@ fn binder_to_string(name : String, annot : DeclType?) -> String {
   match annot {
     Some(type_) => "(\{name} : \{decl_type_to_string(type_)})"
     None => name
+  }
+}
+
+///|
+fn is_binder_start(token : Token) -> Bool {
+  match token {
+    IdentTok(_) | LParenTok => true
+    _ => false
+  }
+}
+
+///|
+fn params_to_expr(params : Array[FnParam], body : Expr) -> Expr {
+  let mut result = body
+  let mut idx = params.length()
+  while idx > 0 {
+    idx = idx - 1
+    let param = params[idx]
+    result = FunExpr(param.name, param.annot, result)
+  }
+  result
+}
+
+///|
+fn ascribe_if_needed(expr : Expr, annot : DeclType?) -> Expr {
+  match annot {
+    Some(type_) => AscribeExpr(expr, type_)
+    None => expr
   }
 }
 
@@ -1561,6 +1595,28 @@ fn parse_binder(
 }
 
 ///|
+fn parse_binder_list(
+  tokens : ArrayView[Token],
+) -> (Array[FnParam], ArrayView[Token]) raise MiniMLError {
+  let params = Array::new()
+  let mut current = tokens
+  while true {
+    match current {
+      [tok, ..] if is_binder_start(tok) => {
+        let (name, annot, rest) = parse_binder(current)
+        params.push(FnParam::{ name, annot })
+        current = rest
+      }
+      _ => break
+    }
+  }
+  if params.is_empty() {
+    raise ParseError("expected function parameter")
+  }
+  (params, current)
+}
+
+///|
 fn parse_enum_variant_decl(
   tokens : ArrayView[Token],
 ) -> (EnumVariantDecl, ArrayView[Token]) raise MiniMLError {
@@ -1666,10 +1722,10 @@ fn parse_fun(
   if tok != FunTok {
     return parse_match(tokens)
   }
-  let (param, annot, rest2) = parse_binder(rest)
+  let (params, rest2) = parse_binder_list(rest)
   let rest3 = expect_token(rest2, ArrowTok)
   let (body, rest4) = parse_expr(rest3)
-  (FunExpr(param, annot, body), rest4)
+  (params_to_expr(params, body), rest4)
 }
 
 ///|
@@ -1705,21 +1761,59 @@ fn parse_let(
   }
   if tok2 == RecTok {
     let (name, rest3) = expect_ident(rest2)
-    let (param, param_annot, rest4) = parse_binder(rest3)
+    let (params, rest4) = parse_binder_list(rest3)
     let (return_annot, rest5) = parse_type_annotation(rest4)
     let rest6 = expect_token(rest5, EqTok)
-    let (fun_body, rest7) = parse_expr(rest6)
+    let (fun_body0, rest7) = parse_expr(rest6)
     let rest8 = expect_token(rest7, InTok)
     let (body, rest9) = parse_expr(rest8)
-    (LetRecExpr(name, param, param_annot, return_annot, fun_body, body), rest9)
+    let first = params[0]
+    let tail = Array::new()
+    for i = 1; i < params.length(); i = i + 1 {
+      tail.push(params[i])
+    }
+    let fun_body = if tail.is_empty() {
+      fun_body0
+    } else {
+      params_to_expr(tail, ascribe_if_needed(fun_body0, return_annot))
+    }
+    let outer_return_annot = if tail.is_empty() { return_annot } else { None }
+    (
+      LetRecExpr(
+        name,
+        first.name,
+        first.annot,
+        outer_return_annot,
+        fun_body,
+        body,
+      ),
+      rest9,
+    )
   } else {
     let (pattern, rest3) = parse_pattern(rest)
-    let (annot, rest4) = parse_type_annotation(rest3)
-    let rest5 = expect_token(rest4, EqTok)
-    let (fun_body, rest6) = parse_expr(rest5)
-    let rest7 = expect_token(rest6, InTok)
-    let (body, rest8) = parse_expr(rest7)
-    (LetExpr(pattern, annot, fun_body, body), rest8)
+    match (pattern, rest3) {
+      (VarPat(name), [tok3, ..]) if is_binder_start(tok3) => {
+        let (params, rest4) = parse_binder_list(rest3)
+        let (return_annot, rest5) = parse_type_annotation(rest4)
+        let rest6 = expect_token(rest5, EqTok)
+        let (fun_body0, rest7) = parse_expr(rest6)
+        let rest8 = expect_token(rest7, InTok)
+        let (body, rest9) = parse_expr(rest8)
+        let bound = params_to_expr(
+          params,
+          ascribe_if_needed(fun_body0, return_annot),
+        )
+        (LetExpr(VarPat(name), None, bound, body), rest9)
+      }
+      _ => {
+        let (annot, rest4) = parse_type_annotation(rest3)
+        let rest5 = expect_token(rest4, EqTok)
+        let (fun_body, rest6) = parse_expr(rest5)
+        let rest7 = expect_token(rest6, InTok)
+        let (body, rest8) = parse_expr(rest7)
+        (LetExpr(pattern, annot, fun_body, body), rest8)
+      }
+    }
   }
 }
 

@@ -90,6 +90,50 @@ test "parenthesized let can be ascribed as a whole" {
 }
 
 ///|
+test "parse multi parameter fun desugars to nested funs" {
+  let expr = parse("fun x y -> x")
+  assert_true(expr is FunExpr("x", None, FunExpr("y", None, VarExpr("x"))))
+}
+
+///|
+test "parse let function sugar desugars to nested funs" {
+  let expr = parse("let add x y = x + y in add")
+  assert_true(
+    expr
+    is LetExpr(
+      VarPat("add"),
+      None,
+      FunExpr(
+        "x",
+        None,
+        FunExpr("y", None, BinaryExpr(Add, VarExpr("x"), VarExpr("y")))
+      ),
+      VarExpr("add")
+    ),
+  )
+}
+
+///|
+test "parse multi parameter let rec with return annotation" {
+  let expr = parse("let rec add (x : int) (y : int) : int = x + y in add")
+  assert_true(
+    expr
+    is LetRecExpr(
+      "add",
+      "x",
+      Some(IntDeclType),
+      None,
+      FunExpr(
+        "y",
+        Some(IntDeclType),
+        AscribeExpr(BinaryExpr(Add, VarExpr("x"), VarExpr("y")), IntDeclType)
+      ),
+      VarExpr("add")
+    ),
+  )
+}
+
+///|
 test "parse list pattern match" {
   let expr = parse("match [1] with | x :: xs -> x | [] -> 0")
   match expr {

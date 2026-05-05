@@ -290,3 +290,42 @@ test "expression ascription can wrap let expression" {
   let code = "(let id = fun x -> x in id 1) : int"
   assert_eq(@miniml.interpret(code), "1")
 }
+
+///|
+test "multi parameter fun evaluates by currying" {
+  let code = "(fun x y -> x + y) 20 22"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "multi parameter fun inference nests arrows" {
+  assert_eq(@miniml.infer("fun x y -> x"), "'t0 -> 't1 -> 't0")
+}
+
+///|
+test "let function sugar evaluates" {
+  let code = "let add x y = x + y in add 19 23"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "let function sugar with parameter annotations constrains type" {
+  let code = "let pick (x : int) (y : bool) = if y then x else 0 in pick"
+  assert_eq(@miniml.infer(code), "int -> bool -> int")
+}
+
+///|
+test "multi parameter let rec evaluates" {
+  let code =
+    #| let rec pow base exp =
+    #|   if exp == 0 then 1 else base * pow base (exp - 1)
+    #| in
+    #| pow 2 5
+  assert_eq(@miniml.interpret(code), "32")
+}
+
+///|
+test "multi parameter let rec return annotation constrains result" {
+  let code = "let rec add (x : int) (y : int) : int = x + y in add"
+  assert_eq(@miniml.infer(code), "int -> int -> int")
+}

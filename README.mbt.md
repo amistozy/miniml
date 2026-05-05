@@ -27,6 +27,7 @@ The current language supports:
 - direct multi-argument variants: `RGB(1, 2, 3)`
 - optional type annotations on `let`, `let rec`, and `fun`
 - expression-level type ascription: `expr : type`
+- multi-parameter `fun`, `let`, and `let rec` via curried syntax sugar
 
 ## Examples
 
@@ -102,6 +103,15 @@ Expression ascription:
 
 ```ml
 ((fun x -> x) : int -> int) 7
+```
+
+Curried multi-parameter functions:
+
+```ml
+let rec pow base exp =
+  if exp == 0 then 1 else base * pow base (exp - 1)
+in
+pow 2 5
 ```
 
 ## CLI
