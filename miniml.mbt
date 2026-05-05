@@ -376,7 +376,7 @@ fn expr_to_string(expr : Expr) -> String {
       "(\{expr_to_string(expr)} : \{decl_type_to_string(type_)})"
     ApplyExpr(func, arg) => "(\{expr_to_string(func)} \{expr_to_string(arg)})"
     BinaryExpr(op, lhs, rhs) =>
-      "(\{expr_to_string(lhs)} \{op.to_string()} \{expr_to_string(rhs)})"
+      "(\{expr_to_string(lhs)} \{op} \{expr_to_string(rhs)})"
     NegExpr(inner) => "(-\{expr_to_string(inner)})"
     NotExpr(inner) => "(!\{expr_to_string(inner)})"
     TupleExpr(exprs) => {
@@ -479,7 +479,7 @@ fn ascribe_if_needed(expr : Expr, annot : DeclType?) -> Expr {
 ///|
 fn make_rec_binding(
   name : String,
-  params : Array[FnParam],
+  params : ArrayView[FnParam],
   return_annot : DeclType?,
   fun_body0 : Expr,
 ) -> RecBinding {
@@ -592,7 +592,10 @@ fn list_hint_string(pattern : Pattern) -> String? {
 }
 
 ///|
-fn ctor_pattern_to_string(name : String, patterns : Array[Pattern]) -> String {
+fn ctor_pattern_to_string(
+  name : String,
+  patterns : ArrayView[Pattern],
+) -> String {
   match patterns.length() {
     0 => name
     1 => "\{name} \{pattern_to_string(patterns[0])}"
@@ -604,7 +607,10 @@ fn ctor_pattern_to_string(name : String, patterns : Array[Pattern]) -> String {
 }
 
 ///|
-fn ctor_pattern_hint_string(name : String, patterns : Array[Pattern]) -> String {
+fn ctor_pattern_hint_string(
+  name : String,
+  patterns : ArrayView[Pattern],
+) -> String {
   match patterns.length() {
     0 => name
     1 => "\{name}(\{pattern_hint_string(patterns[0])})"
@@ -616,7 +622,7 @@ fn ctor_pattern_hint_string(name : String, patterns : Array[Pattern]) -> String 
 }
 
 ///|
-fn ctor_value_to_string(name : String, values : Array[Value]) -> String {
+fn ctor_value_to_string(name : String, values : ArrayView[Value]) -> String {
   match values.length() {
     0 => name
     1 => "\{name}(\{value_to_string(values[0])})"
@@ -803,7 +809,7 @@ fn skip_line_comment(code : StringView) -> StringView {
 }
 
 ///|
-pub fn tokenize(code : String) -> Array[Token] raise MiniMLError {
+pub fn tokenize(code : String) -> ArrayView[Token] raise MiniMLError {
   let tokens = []
   for rest = code[:] {
     match rest {
@@ -937,7 +943,7 @@ pub fn tokenize(code : String) -> Array[Token] raise MiniMLError {
         tokens.push(token)
         continue next
       }
-      [c, ..] => raise LexError("unexpected character `\{c.to_string()}`")
+      [c, ..] => raise LexError("unexpected character `\{c}`")
     }
   }
   tokens
@@ -1043,13 +1049,11 @@ fn parse_ctor_pattern_args(
         )
       [] => raise ParseError("expected `)` to close constructor pattern")
     }
-  } nobreak {
-    (CtorPat(name, patterns), current)
   }
 }
 
 ///|
-fn list_pattern_from_array(patterns : Array[Pattern]) -> Pattern {
+fn list_pattern_from_array(patterns : ArrayView[Pattern]) -> Pattern {
   patterns.rev_fold(init=NilPat, (acc, pattern) => ConsPat(pattern, acc))
 }
 
@@ -1096,8 +1100,6 @@ fn parse_pattern_atom(
                 )
               [] => raise ParseError("expected `]` to close list pattern")
             }
-          } nobreak {
-            (NilPat, current)
           }
         }
       }
@@ -1157,12 +1159,8 @@ fn parse_pattern(
 }
 
 ///|
-fn apply_args(func : Expr, args : Array[Expr]) -> Expr {
-  let mut result = func
-  for arg in args {
-    result = ApplyExpr(result, arg)
-  }
-  result
+fn apply_args(func : Expr, args : ArrayView[Expr]) -> Expr {
+  args.fold(init=func, (acc, arg) => ApplyExpr(acc, arg))
 }
 
 ///|
@@ -1173,13 +1171,12 @@ fn parse_ctor_expr_args(
   let args = []
   let (first, rest) = parse_expr(tokens)
   args.push(first)
-  let mut current = rest
-  while true {
+  for current = rest {
     match current {
       [CommaTok, .. rest2] => {
         let (next_expr, rest3) = parse_expr(rest2)
         args.push(next_expr)
-        current = rest3
+        continue rest3
       }
       [RParenTok, .. rest2] => return (apply_args(VarExpr(name), args), rest2)
       [tok, ..] =>
@@ -1189,7 +1186,6 @@ fn parse_ctor_expr_args(
       [] => raise ParseError("expected `)` to close constructor arguments")
     }
   }
-  (VarExpr(name), current)
 }
 
 ///|
@@ -1215,13 +1211,12 @@ fn parse_atom(
           let exprs = []
           let (first, rest2) = parse_expr(rest)
           exprs.push(first)
-          let mut current = rest2
-          while true {
+          for current = rest2 {
             match current {
               [CommaTok, .. rest3] => {
                 let (next_expr, rest4) = parse_expr(rest3)
                 exprs.push(next_expr)
-                current = rest4
+                continue rest4
               }
               [RBracketTok, .. rest3] => return (ListExpr(exprs), rest3)
               [tok2, ..] =>
@@ -1231,7 +1226,6 @@ fn parse_atom(
               [] => raise ParseError("expected `]` to close list literal")
             }
           }
-          (ListExpr(exprs), current)
         }
       }
     LParenTok =>
@@ -1242,8 +1236,7 @@ fn parse_atom(
           let (first, rest2) = parse_expr(rest)
           match rest2 {
             [CommaTok, .. rest3] => {
-              let exprs = []
-              exprs.push(first)
+              let exprs = [first]
               let mut current = rest3
               while true {
                 let (next_expr, rest4) = parse_expr(current)
@@ -1300,19 +1293,15 @@ fn parse_application(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
   let (expr0, rest0) = parse_prefix(tokens)
-  let mut expr = expr0
-  let mut rest = rest0
-  while true {
+  for expr = expr0, rest = rest0 {
     match rest {
       [tok, ..] if is_atom_start(tok) => {
         let (arg, next_rest) = parse_prefix(rest)
-        expr = ApplyExpr(expr, arg)
-        rest = next_rest
+        continue ApplyExpr(expr, arg), next_rest
       }
-      _ => break
+      _ => break (expr, rest)
     }
   }
-  (expr, rest)
 }
 
 ///|
@@ -1320,24 +1309,19 @@ fn parse_mul(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
   let (expr0, rest0) = parse_application(tokens)
-  let mut expr = expr0
-  let mut rest = rest0
-  while true {
+  for expr = expr0, rest = rest0 {
     match rest {
       [StarTok, .. rest2] => {
         let (rhs, next_rest) = parse_application(rest2)
-        expr = BinaryExpr(Mul, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(Mul, expr, rhs), next_rest
       }
       [SlashTok, .. rest2] => {
         let (rhs, next_rest) = parse_application(rest2)
-        expr = BinaryExpr(Div, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(Div, expr, rhs), next_rest
       }
-      _ => break
+      _ => break (expr, rest)
     }
   }
-  (expr, rest)
 }
 
 ///|
@@ -1345,24 +1329,19 @@ fn parse_add(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
   let (expr0, rest0) = parse_mul(tokens)
-  let mut expr = expr0
-  let mut rest = rest0
-  while true {
+  for expr = expr0, rest = rest0 {
     match rest {
       [PlusTok, .. rest2] => {
         let (rhs, next_rest) = parse_mul(rest2)
-        expr = BinaryExpr(Add, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(Add, expr, rhs), next_rest
       }
       [MinusTok, .. rest2] => {
         let (rhs, next_rest) = parse_mul(rest2)
-        expr = BinaryExpr(Sub, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(Sub, expr, rhs), next_rest
       }
-      _ => break
+      _ => break (expr, rest)
     }
   }
-  (expr, rest)
 }
 
 ///|
@@ -1384,44 +1363,35 @@ fn parse_compare(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
   let (expr0, rest0) = parse_cons(tokens)
-  let mut expr = expr0
-  let mut rest = rest0
-  while true {
+  for expr = expr0, rest = rest0 {
     match rest {
       [EqEqTok, .. rest2] => {
         let (rhs, next_rest) = parse_cons(rest2)
-        expr = BinaryExpr(Eq, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(Eq, expr, rhs), next_rest
       }
       [NotEqTok, .. rest2] => {
         let (rhs, next_rest) = parse_cons(rest2)
-        expr = BinaryExpr(NE, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(NE, expr, rhs), next_rest
       }
       [LtTok, .. rest2] => {
         let (rhs, next_rest) = parse_cons(rest2)
-        expr = BinaryExpr(LT, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(LT, expr, rhs), next_rest
       }
       [LeTok, .. rest2] => {
         let (rhs, next_rest) = parse_cons(rest2)
-        expr = BinaryExpr(LE, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(LE, expr, rhs), next_rest
       }
       [GtTok, .. rest2] => {
         let (rhs, next_rest) = parse_cons(rest2)
-        expr = BinaryExpr(GT, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(GT, expr, rhs), next_rest
       }
       [GeTok, .. rest2] => {
         let (rhs, next_rest) = parse_cons(rest2)
-        expr = BinaryExpr(GE, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(GE, expr, rhs), next_rest
       }
-      _ => break
+      _ => break (expr, rest)
     }
   }
-  (expr, rest)
 }
 
 ///|
@@ -1429,19 +1399,15 @@ fn parse_and(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
   let (expr0, rest0) = parse_compare(tokens)
-  let mut expr = expr0
-  let mut rest = rest0
-  while true {
+  for expr = expr0, rest = rest0 {
     match rest {
       [AndTok, .. rest2] => {
         let (rhs, next_rest) = parse_compare(rest2)
-        expr = BinaryExpr(And, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(And, expr, rhs), next_rest
       }
-      _ => break
+      _ => break (expr, rest)
     }
   }
-  (expr, rest)
 }
 
 ///|
@@ -1449,19 +1415,15 @@ fn parse_or(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
   let (expr0, rest0) = parse_and(tokens)
-  let mut expr = expr0
-  let mut rest = rest0
-  while true {
+  for expr = expr0, rest = rest0 {
     match rest {
       [OrTok, .. rest2] => {
         let (rhs, next_rest) = parse_and(rest2)
-        expr = BinaryExpr(Or, expr, rhs)
-        rest = next_rest
+        continue BinaryExpr(Or, expr, rhs), next_rest
       }
-      _ => break
+      _ => break (expr, rest)
     }
   }
-  (expr, rest)
 }
 
 ///|
@@ -1495,21 +1457,18 @@ fn parse_match(
   let (scrutinee, rest2) = parse_expr(rest)
   let rest3 = expect_token(rest2, WithTok)
   let arms = []
-  let mut current = rest3
-  let (first_arm, rest4) = parse_match_arm(current)
+  let (first_arm, rest4) = parse_match_arm(rest3)
   arms.push(first_arm)
-  current = rest4
-  while true {
+  for current = rest4 {
     match current {
       [BarTok, ..] => {
         let (arm, rest5) = parse_match_arm(current)
         arms.push(arm)
-        current = rest5
+        continue rest5
       }
-      _ => break
+      _ => break (MatchExpr(scrutinee, arms), current)
     }
   }
-  (MatchExpr(scrutinee, arms), current)
 }
 
 ///|
@@ -1529,13 +1488,12 @@ fn parse_decl_type_atom(
           let args = []
           let (first, rest3) = parse_decl_type(rest2)
           args.push(first)
-          let mut current = rest3
-          while true {
+          for current = rest3 {
             match current {
               [CommaTok, .. rest4] => {
                 let (next_arg, rest5) = parse_decl_type(rest4)
                 args.push(next_arg)
-                current = rest5
+                continue rest5
               }
               [RBracketTok, .. rest4] =>
                 return (NamedDeclType(name, args), rest4)
@@ -1546,7 +1504,6 @@ fn parse_decl_type_atom(
               [] => raise ParseError("expected `]` to close type arguments")
             }
           }
-          (NamedDeclType(name, args), current)
         }
         _ => (NamedDeclType(name, []), rest)
       }
@@ -1593,29 +1550,20 @@ fn parse_decl_type_atom(
 fn parse_decl_type(
   tokens : ArrayView[Token],
 ) -> (DeclType, ArrayView[Token]) raise MiniMLError {
-  let mut current = tokens
-  let (base, rest) = parse_decl_type_atom(current)
-  let mut result = base
-  current = rest
-  while true {
+  let (base, rest) = parse_decl_type_atom(tokens)
+  for result = base, current = rest {
     match current {
-      [IdentTok("list"), .. rest2] => {
-        result = ListDeclType(result)
-        current = rest2
-      }
-      [IdentTok("option"), .. rest2] => {
-        result = OptionDeclType(result)
-        current = rest2
-      }
-      _ => break
+      [IdentTok("list"), .. rest2] => continue ListDeclType(result), rest2
+      [IdentTok("option"), .. rest2] => continue OptionDeclType(result), rest2
+      _ =>
+        break match current {
+          [ArrowTok, .. rest2] => {
+            let (ret, rest3) = parse_decl_type(rest2)
+            (FunDeclType(result, ret), rest3)
+          }
+          _ => (result, current)
+        }
     }
-  }
-  match current {
-    [ArrowTok, .. rest2] => {
-      let (ret, rest3) = parse_decl_type(rest2)
-      (FunDeclType(result, ret), rest3)
-    }
-    _ => (result, current)
   }
 }
 
@@ -1659,21 +1607,21 @@ fn parse_binder_list(
   tokens : ArrayView[Token],
 ) -> (Array[FnParam], ArrayView[Token]) raise MiniMLError {
   let params = []
-  let mut current = tokens
-  while true {
+  for current = tokens {
     match current {
       [tok, ..] if is_binder_start(tok) => {
         let (name, annot, rest) = parse_binder(current)
         params.push(FnParam::{ name, annot })
-        current = rest
+        continue rest
       }
-      _ => break
+      _ => {
+        if params.is_empty() {
+          raise ParseError("expected function parameter")
+        }
+        break (params, current)
+      }
     }
   }
-  if params.is_empty() {
-    raise ParseError("expected function parameter")
-  }
-  (params, current)
 }
 
 ///|
@@ -1724,13 +1672,12 @@ fn parse_enum_variant_decl(
       let fields = []
       let (first, rest3) = parse_decl_type(rest2)
       fields.push(first)
-      let mut current = rest3
-      while true {
+      for current = rest3 {
         match current {
           [CommaTok, .. rest4] => {
             let (next_field, rest5) = parse_decl_type(rest4)
             fields.push(next_field)
-            current = rest5
+            continue rest5
           }
           [RParenTok, .. rest4] =>
             return (EnumVariantDecl::{ name, fields }, rest4)
@@ -1741,7 +1688,6 @@ fn parse_enum_variant_decl(
           [] => raise ParseError("expected `)` to close variant fields")
         }
       }
-      (EnumVariantDecl::{ name, fields }, current)
     }
     _ => (EnumVariantDecl::{ name, fields: [] }, rest)
   }
@@ -1756,13 +1702,12 @@ fn parse_enum_type_params(
       let params = []
       let (first, rest2) = expect_ident(rest)
       params.push(first)
-      let mut current = rest2
-      while true {
+      for current = rest2 {
         match current {
           [CommaTok, .. rest3] => {
             let (param, rest4) = expect_ident(rest3)
             params.push(param)
-            current = rest4
+            continue rest4
           }
           [RBracketTok, .. rest3] => return (params, rest3)
           [tok, ..] =>
@@ -1772,7 +1717,6 @@ fn parse_enum_type_params(
           [] => raise ParseError("expected `]` to close enum type parameters")
         }
       }
-      (params, current)
     }
     _ => ([], tokens)
   }
@@ -1794,20 +1738,20 @@ fn parse_enum(
   let variants = []
   let (first_variant, rest5) = parse_enum_variant_decl(rest4)
   variants.push(first_variant)
-  let mut current = rest5
-  while true {
+  for current = rest5 {
     match current {
       [BarTok, .. rest6] => {
         let (variant, rest7) = parse_enum_variant_decl(rest6)
         variants.push(variant)
-        current = rest7
+        continue rest7
       }
-      _ => break
+      _ => {
+        let rest6 = expect_token(current, InTok)
+        let (body, rest7) = parse_expr(rest6)
+        break (EnumExpr(EnumDecl::{ name, type_params, variants }, body), rest7)
+      }
     }
   }
-  let rest6 = expect_token(current, InTok)
-  let (body, rest7) = parse_expr(rest6)
-  (EnumExpr(EnumDecl::{ name, type_params, variants }, body), rest7)
 }
 
 ///|
@@ -1860,8 +1804,7 @@ fn parse_let(
   if tok2 == RecTok {
     let (name, rest3) = expect_ident(rest2)
     let (first_binding, rest4) = parse_rec_binding(name, rest3)
-    let bindings = []
-    bindings.push(first_binding)
+    let bindings = [first_binding]
     let mut current = rest4
     while true {
       match current {
@@ -1925,19 +1868,15 @@ fn parse_expr(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
   let (expr0, rest0) = parse_enum(tokens)
-  let mut expr = expr0
-  let mut rest = rest0
-  while true {
+  for expr = expr0, rest = rest0 {
     match rest {
       [ColonTok, .. rest2] => {
         let (type_, rest3) = parse_decl_type(rest2)
-        expr = AscribeExpr(expr, type_)
-        rest = rest3
+        continue AscribeExpr(expr, type_), rest3
       }
-      _ => break
+      _ => break (expr, rest)
     }
   }
-  (expr, rest)
 }
 
 ///|
@@ -1982,7 +1921,7 @@ fn value_eq(lhs : Value, rhs : Value) -> Bool raise MiniMLError {
       }
       true
     }
-    (ClosureValue(_, _, _), _) | (_, ClosureValue(_, _, _)) =>
+    (ClosureValue(_), _) | (_, ClosureValue(_)) =>
       raise RuntimeError("cannot compare function values")
     _ => false
   }
@@ -2077,38 +2016,24 @@ fn enum_ctor_type(
   ctx : InferCtx,
 ) -> Type {
   let result_ty = NamedType(enum_name, enum_id, result_args)
-  let mut result = result_ty
-  let mut idx = variant.fields.length()
-  while idx > 0 {
-    idx = idx - 1
+  variant.fields.rev_fold(init=result_ty, (acc, field) => {
     let field_ty = resolve_decl_type(
-      variant.fields[idx],
-      enum_name,
-      enum_id,
-      type_params,
-      ctx,
+      field, enum_name, enum_id, type_params, ctx,
     )
-    result = FunType(field_ty, result)
-  }
-  result
+    FunType(field_ty, acc)
+  })
 }
 
 ///|
 fn fresh_enum_id(ctx : InferCtx) -> Int {
   let id = ctx.next_enum_id
-  ctx.next_enum_id = ctx.next_enum_id + 1
+  ctx.next_enum_id += 1
   id
 }
 
 ///|
 fn list_from_values(values : Array[Value]) -> Value {
-  let mut result = NilValue
-  let mut idx = values.length()
-  while idx > 0 {
-    idx = idx - 1
-    result = ConsValue(values[idx], result)
-  }
-  result
+  values.rev_fold(init=NilValue, (acc, value) => ConsValue(value, acc))
 }
 
 ///|
@@ -2185,21 +2110,21 @@ fn eval_enum_body(
   env : Env,
   body : Expr,
 ) -> Value raise MiniMLError {
-  let mut enum_env = env
-  for variant in decl.variants {
+  for variant in decl.variants; enum_env = env {
     let value = if variant.fields.is_empty() {
       VariantValue(variant.name, [])
     } else {
       CtorFuncValue(variant.name, variant.fields.length(), [])
     }
-    enum_env = enum_env.extend(variant.name, value)
+    continue enum_env.extend(variant.name, value)
+  } nobreak {
+    eval_expr(body, enum_env)
   }
-  eval_expr(body, enum_env)
 }
 
 ///|
 fn eval_rec_group(
-  bindings : Array[RecBinding],
+  bindings : ArrayView[RecBinding],
   env : Env,
   body : Expr,
 ) -> Value raise MiniMLError {
@@ -2220,7 +2145,7 @@ fn eval_rec_group(
 
 ///|
 fn eval_let_group(
-  bindings : Array[LetBinding],
+  bindings : ArrayView[LetBinding],
   env : Env,
   body : Expr,
 ) -> Value raise MiniMLError {
@@ -2262,10 +2187,7 @@ fn eval_binary(
     (GE, IntValue(a), IntValue(b)) => BoolValue(a >= b)
     (And, BoolValue(a), BoolValue(b)) => BoolValue(a && b)
     (Or, BoolValue(a), BoolValue(b)) => BoolValue(a || b)
-    _ =>
-      raise RuntimeError(
-        "type mismatch in binary operation `\{op.to_string()}`",
-      )
+    _ => raise RuntimeError("type mismatch in binary operation `\{op}`")
   }
 }
 
@@ -2398,7 +2320,7 @@ fn type_var_name(printer : TypePrinter, id : Int) -> String {
     Some(name) => name
     None => {
       let name = "'t\{printer.next_id}"
-      printer.next_id = printer.next_id + 1
+      printer.next_id += 1
       printer.names.set(id, name)
       name
     }
@@ -2456,7 +2378,7 @@ fn type_to_string(type_ : Type) -> String {
 ///|
 fn fresh_type_var(ctx : InferCtx) -> Type {
   let id = ctx.next_id
-  ctx.next_id = ctx.next_id + 1
+  ctx.next_id += 1
   VarType(id)
 }
 
@@ -2489,22 +2411,8 @@ fn occurs_in(var_id : Int, type_ : Type, ctx : InferCtx) -> Bool {
     FunType(arg, ret) =>
       occurs_in(var_id, arg, ctx) || occurs_in(var_id, ret, ctx)
     OptionType(elem) => occurs_in(var_id, elem, ctx)
-    NamedType(_, _, args) => {
-      for t in args {
-        if occurs_in(var_id, t, ctx) {
-          return true
-        }
-      }
-      false
-    }
-    TupleType(types) => {
-      for t in types {
-        if occurs_in(var_id, t, ctx) {
-          return true
-        }
-      }
-      false
-    }
+    NamedType(_, _, args) => args.any(t => occurs_in(var_id, t, ctx))
+    TupleType(types) => types.any(t => occurs_in(var_id, t, ctx))
     ListType(elem) => occurs_in(var_id, elem, ctx)
     _ => false
   }
@@ -2728,7 +2636,7 @@ fn make_enum_type_args(decl : EnumDecl, ctx : InferCtx) -> Array[Type] {
 ///|
 fn enum_type_param_map(
   decl : EnumDecl,
-  args : Array[Type],
+  args : ArrayView[Type],
 ) -> Map[String, Type] {
   let map = {}
   for i = 0; i < decl.type_params.length() && i < args.length(); i = i + 1 {
@@ -2738,15 +2646,13 @@ fn enum_type_param_map(
 }
 
 ///|
-fn scheme_vars_from_types(types : Array[Type]) -> Array[Int] {
-  let vars = []
-  for type_ in types {
+fn scheme_vars_from_types(types : ArrayView[Type]) -> Array[Int] {
+  types.filter_map(type_ => {
     match type_ {
-      VarType(id) => vars.push(id)
-      _ => ()
+      VarType(id) => Some(id)
+      _ => None
     }
-  }
-  vars
+  })
 }
 
 ///|
@@ -2956,45 +2862,8 @@ fn pattern_is_wild(pattern : Pattern) -> Bool {
 }
 
 ///|
-fn row_is_all_wild(row : Array[Pattern]) -> Bool {
+fn row_is_all_wild(row : ArrayView[Pattern]) -> Bool {
   row.all(pattern_is_wild)
-}
-
-///|
-fn drop_first_pattern(row : Array[Pattern]) -> Array[Pattern] {
-  row[1:].to_owned()
-}
-
-///|
-fn prepend_pattern(pattern : Pattern, rest : Array[Pattern]) -> Array[Pattern] {
-  [pattern, ..rest]
-}
-
-///|
-fn array_slice_patterns(
-  patterns : Array[Pattern],
-  start : Int,
-  end_ : Int,
-) -> Array[Pattern] {
-  patterns[start:end_].to_owned()
-}
-
-///|
-fn array_slice_types(types : Array[Type], start : Int) -> Array[Type] {
-  types[start:].to_owned()
-}
-
-///|
-fn concat_patterns(
-  left : Array[Pattern],
-  right : Array[Pattern],
-) -> Array[Pattern] {
-  [..left, ..right]
-}
-
-///|
-fn concat_types(left : Array[Type], right : Array[Type]) -> Array[Type] {
-  [..left, ..right]
 }
 
 ///|
@@ -3021,13 +2890,13 @@ fn match_matrix_kind(ty : Type, ctx : InferCtx) -> MatchMatrixKind {
 
 ///|
 fn default_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
-  let result = []
-  for row in rows {
-    if row.length() > 0 && pattern_is_wild(row[0]) {
-      result.push(drop_first_pattern(row))
+  rows.filter_map(row => {
+    if row is [head, .. tail] && pattern_is_wild(head) {
+      Some(tail.to_owned())
+    } else {
+      None
     }
-  }
-  result
+  })
 }
 
 ///|
@@ -3035,53 +2904,47 @@ fn specialize_bool_rows(
   rows : Array[Array[Pattern]],
   target : Bool,
 ) -> Array[Array[Pattern]] {
-  let result = []
-  for row in rows {
-    guard row is [head, .. tail] else {  }
+  rows.filter_map(row => {
+    guard row is [head, .. tail] else { None }
     if pattern_is_wild(head) {
-      result.push(tail.to_owned())
+      Some(tail.to_owned())
     } else {
       match head {
-        BoolPat(value) if value == target => result.push(tail.to_owned())
-        _ => ()
+        BoolPat(value) if value == target => Some(tail.to_owned())
+        _ => None
       }
     }
-  }
-  result
+  })
 }
 
 ///|
 fn specialize_none_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
-  let result = []
-  for row in rows {
-    guard row is [head, .. tail] else {  }
+  rows.filter_map(row => {
+    guard row is [head, .. tail] else { None }
     if pattern_is_wild(head) {
-      result.push(tail.to_owned())
+      Some(tail.to_owned())
     } else {
       match head {
-        CtorPat("None", []) => result.push(tail.to_owned())
-        _ => ()
+        CtorPat("None", []) => Some(tail.to_owned())
+        _ => None
       }
     }
-  }
-  result
+  })
 }
 
 ///|
 fn specialize_some_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
-  let result = []
-  for row in rows {
-    guard row is [head, .. tail] else {  }
+  rows.filter_map(row => {
+    guard row is [head, .. tail] else { None }
     if pattern_is_wild(head) {
-      result.push([WildcardPat, ..tail])
+      Some([WildcardPat, ..tail])
     } else {
       match head {
-        CtorPat("Some", [inner]) => result.push([inner, ..tail])
-        _ => ()
+        CtorPat("Some", [inner]) => Some([inner, ..tail])
+        _ => None
       }
     }
-  }
-  result
+  })
 }
 
 ///|
@@ -3090,24 +2953,24 @@ fn specialize_enum_rows(
   ctor_name : String,
   arity : Int,
 ) -> Array[Array[Pattern]] {
-  let result = []
-  for row in rows {
-    guard row is [head, .. tail] else {  }
+  rows.filter_map(row => {
+    guard row is [head, .. tail] else { None }
     if pattern_is_wild(head) {
-      result.push([..wildcard_patterns(arity), ..tail])
+      Some([..wildcard_patterns(arity), ..tail])
     } else {
       match head {
         CtorPat(name, patterns) if name == ctor_name =>
           if patterns.length() == arity {
-            result.push([..patterns, ..tail])
+            Some([..patterns, ..tail])
           } else if arity == 0 && patterns.is_empty() {
-            result.push(tail.to_owned())
+            Some(tail.to_owned())
+          } else {
+            None
           }
-        _ => ()
+        _ => None
       }
     }
-  }
-  result
+  })
 }
 
 ///|
@@ -3115,19 +2978,17 @@ fn specialize_int_rows(
   rows : Array[Array[Pattern]],
   target : Int,
 ) -> Array[Array[Pattern]] {
-  let result = []
-  for row in rows {
-    guard row is [head, .. tail] else {  }
+  rows.filter_map(row => {
+    guard row is [head, .. tail] else { None }
     if pattern_is_wild(head) {
-      result.push(tail.to_owned())
+      Some(tail.to_owned())
     } else {
       match head {
-        IntPat(value) if value == target => result.push(tail.to_owned())
-        _ => ()
+        IntPat(value) if value == target => Some(tail.to_owned())
+        _ => None
       }
     }
-  }
-  result
+  })
 }
 
 ///|
@@ -3135,54 +2996,47 @@ fn specialize_tuple_rows(
   rows : Array[Array[Pattern]],
   arity : Int,
 ) -> Array[Array[Pattern]] {
-  let result = []
-  for row in rows {
-    guard row is [head, .. tail] else {  }
+  rows.filter_map(row => {
+    guard row is [head, .. tail] else { None }
     if pattern_is_wild(head) {
-      result.push([..wildcard_patterns(arity), ..tail])
+      Some([..wildcard_patterns(arity), ..tail])
     } else {
       match head {
-        TuplePat(parts) if parts.length() == arity =>
-          result.push([..parts, ..tail])
-        _ => ()
+        TuplePat(parts) if parts.length() == arity => Some([..parts, ..tail])
+        _ => None
       }
     }
-  }
-  result
+  })
 }
 
 ///|
 fn specialize_nil_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
-  let result = []
-  for row in rows {
-    guard row is [head, .. tail] else {  }
+  rows.filter_map(row => {
+    guard row is [head, .. tail] else { None }
     if pattern_is_wild(head) {
-      result.push(tail.to_owned())
+      Some(tail.to_owned())
     } else {
       match head {
-        NilPat => result.push(tail.to_owned())
-        _ => ()
+        NilPat => Some(tail.to_owned())
+        _ => None
       }
     }
-  }
-  result
+  })
 }
 
 ///|
 fn specialize_cons_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
-  let result = []
-  for row in rows {
-    guard row is [head, .. tail] else {  }
+  rows.filter_map(row => {
+    guard row is [head, .. tail] else { None }
     if pattern_is_wild(head) {
-      result.push([WildcardPat, WildcardPat, ..tail])
+      Some([WildcardPat, WildcardPat, ..tail])
     } else {
       match head {
-        ConsPat(head_pat, tail_pat) => result.push([head_pat, tail_pat, ..tail])
-        _ => ()
+        ConsPat(head_pat, tail_pat) => Some([head_pat, tail_pat, ..tail])
+        _ => None
       }
     }
-  }
-  result
+  })
 }
 
 ///|
@@ -3290,8 +3144,8 @@ fn patterns_cover_vector(
 ///|
 fn useful_vector(
   rows : Array[Array[Pattern]],
-  vector : Array[Pattern],
-  types : Array[Type],
+  vector : ArrayView[Pattern],
+  types : ArrayView[Type],
   ctx : InferCtx,
 ) -> Bool {
   if vector.length() == 0 {
@@ -3302,10 +3156,9 @@ fn useful_vector(
       return false
     }
   }
-  let head_pat = vector[0]
-  let tail_vec = array_slice_patterns(vector, 1, vector.length())
-  let head_ty = prune_type(types[0], ctx)
-  let tail_tys = array_slice_types(types, 1)
+  guard vector is [head_pat, .. tail_vec]
+  guard types is [head_ty, .. tail_tys]
+  let head_ty = prune_type(head_ty, ctx)
   match head_pat {
     WildcardPat | VarPat(_) =>
       match match_matrix_kind(head_ty, ctx) {
@@ -3314,13 +3167,13 @@ fn useful_vector(
         BoolKind =>
           useful_vector(
             specialize_bool_rows(rows, true),
-            prepend_pattern(BoolPat(true), tail_vec),
+            [BoolPat(true), ..tail_vec],
             types,
             ctx,
           ) ||
           useful_vector(
             specialize_bool_rows(rows, false),
-            prepend_pattern(BoolPat(false), tail_vec),
+            [BoolPat(false), ..tail_vec],
             types,
             ctx,
           )
@@ -3330,8 +3183,8 @@ fn useful_vector(
               useful_vector(specialize_none_rows(rows), tail_vec, tail_tys, ctx) ||
               useful_vector(
                 specialize_some_rows(rows),
-                concat_patterns([WildcardPat], tail_vec),
-                concat_types([elem_ty], tail_tys),
+                [WildcardPat, ..tail_vec],
+                [elem_ty, ..tail_tys],
                 ctx,
               )
             _ => false
@@ -3345,10 +3198,10 @@ fn useful_vector(
                   variant.name,
                   variant.fields.length(),
                 )
-                let next_vec = concat_patterns(
-                  wildcard_patterns(variant.fields.length()),
-                  tail_vec,
-                )
+                let next_vec = [
+                  ..wildcard_patterns(variant.fields.length()),
+                  ..tail_vec,
+                ]
                 let type_params = enum_type_param_map(
                   decl,
                   match head_ty {
@@ -3368,7 +3221,7 @@ fn useful_vector(
                     ),
                   )
                 }
-                let next_tys = concat_types(field_tys, tail_tys)
+                let next_tys = [..field_tys, ..tail_tys]
                 if useful_vector(next_rows, next_vec, next_tys, ctx) {
                   return true
                 }
@@ -3382,8 +3235,8 @@ fn useful_vector(
             TupleType(elem_tys) =>
               useful_vector(
                 specialize_tuple_rows(rows, arity),
-                concat_patterns(wildcard_patterns(arity), tail_vec),
-                concat_types(elem_tys, tail_tys),
+                [..wildcard_patterns(arity), ..tail_vec],
+                [..elem_tys, ..tail_tys],
                 ctx,
               )
             _ => false
@@ -3394,8 +3247,8 @@ fn useful_vector(
               useful_vector(specialize_nil_rows(rows), tail_vec, tail_tys, ctx) ||
               useful_vector(
                 specialize_cons_rows(rows),
-                concat_patterns([WildcardPat, WildcardPat], tail_vec),
-                concat_types([elem_ty, head_ty], tail_tys),
+                [WildcardPat, WildcardPat, ..tail_vec],
+                [elem_ty, head_ty, ..tail_tys],
                 ctx,
               )
             _ => false
@@ -3436,8 +3289,8 @@ fn useful_vector(
                     }
                     useful_vector(
                       specialize_enum_rows(rows, name, variant.fields.length()),
-                      concat_patterns(patterns, tail_vec),
-                      concat_types(field_tys, tail_tys),
+                      [..patterns, ..tail_vec],
+                      [..field_tys, ..tail_tys],
                       ctx,
                     )
                   }
@@ -3455,8 +3308,8 @@ fn useful_vector(
                 OptionType(elem_ty) =>
                   useful_vector(
                     specialize_some_rows(rows),
-                    concat_patterns([inner], tail_vec),
-                    concat_types([elem_ty], tail_tys),
+                    [inner, ..tail_vec],
+                    [elem_ty, ..tail_tys],
                     ctx,
                   )
                 _ => false
@@ -3469,8 +3322,8 @@ fn useful_vector(
         TupleType(elem_tys) =>
           useful_vector(
             specialize_tuple_rows(rows, parts.length()),
-            concat_patterns(parts, tail_vec),
-            concat_types(elem_tys, tail_tys),
+            [..parts, ..tail_vec],
+            [..elem_tys, ..tail_tys],
             ctx,
           )
         _ => false
@@ -3481,8 +3334,8 @@ fn useful_vector(
         ListType(elem_ty) =>
           useful_vector(
             specialize_cons_rows(rows),
-            concat_patterns([head, tail], tail_vec),
-            concat_types([elem_ty, head_ty], tail_tys),
+            [head, tail, ..tail_vec],
+            [elem_ty, head_ty, ..tail_tys],
             ctx,
           )
         _ => false
@@ -3493,7 +3346,7 @@ fn useful_vector(
 ///|
 fn find_missing_vector(
   rows : Array[Array[Pattern]],
-  types : Array[Type],
+  types : ArrayView[Type],
   ctx : InferCtx,
 ) -> Array[Pattern]? {
   if types.length() == 0 {
@@ -3508,13 +3361,13 @@ fn find_missing_vector(
       return None
     }
   }
-  let head_ty = prune_type(types[0], ctx)
-  let tail_tys = array_slice_types(types, 1)
+  guard types is [head_ty, .. tail_tys]
+  let head_ty = prune_type(head_ty, ctx)
   match match_matrix_kind(head_ty, ctx) {
     UniversalKind => {
       let missing = find_missing_vector(default_rows(rows), tail_tys, ctx)
       match missing {
-        Some(rest) => Some(prepend_pattern(WildcardPat, rest))
+        Some(rest) => Some([WildcardPat, ..rest])
         None => None
       }
     }
@@ -3525,7 +3378,7 @@ fn find_missing_vector(
         ctx,
       )
       match missing_true {
-        Some(rest) => Some(prepend_pattern(BoolPat(true), rest))
+        Some(rest) => Some([BoolPat(true), ..rest])
         None => {
           let missing_false = find_missing_vector(
             specialize_bool_rows(rows, false),
@@ -3533,7 +3386,7 @@ fn find_missing_vector(
             ctx,
           )
           match missing_false {
-            Some(rest) => Some(prepend_pattern(BoolPat(false), rest))
+            Some(rest) => Some([BoolPat(false), ..rest])
             None => None
           }
         }
@@ -3548,17 +3401,17 @@ fn find_missing_vector(
             ctx,
           )
           match missing_none {
-            Some(rest) => Some(prepend_pattern(CtorPat("None", []), rest))
+            Some(rest) => Some([CtorPat("None", []), ..rest])
             None => {
               let missing_some = find_missing_vector(
                 specialize_some_rows(rows),
-                concat_types([elem_ty], tail_tys),
+                [elem_ty, ..tail_tys],
                 ctx,
               )
               match missing_some {
                 Some(vec) => {
-                  let rest = array_slice_patterns(vec, 1, vec.length())
-                  Some(prepend_pattern(CtorPat("Some", [vec[0]]), rest))
+                  guard vec is [head, .. rest]
+                  Some([CtorPat("Some", [head]), ..rest])
                 }
                 None => None
               }
@@ -3583,27 +3436,16 @@ fn find_missing_vector(
               variant.name,
               variant.fields.length(),
             )
-            let field_tys = []
-            for field in variant.fields {
-              field_tys.push(
-                resolve_decl_type(field, decl.name, enum_id, type_params, ctx),
-              )
-            }
-            let tys2 = concat_types(field_tys, tail_tys)
+            let field_tys = variant.fields.map(field => {
+              resolve_decl_type(field, decl.name, enum_id, type_params, ctx)
+            })
+            let tys2 = [..field_tys, ..tail_tys]
             match find_missing_vector(rows2, tys2, ctx) {
               Some(vec) => {
-                let rest = array_slice_patterns(
-                  vec,
-                  variant.fields.length(),
-                  vec.length(),
-                )
-                let ctor_args = array_slice_patterns(
-                  vec,
-                  0,
-                  variant.fields.length(),
-                )
+                let rest = vec[variant.fields.length():vec.length()]
+                let ctor_args = vec[0:variant.fields.length()]
                 return Some(
-                  prepend_pattern(CtorPat(variant.name, ctor_args), rest),
+                  [CtorPat(variant.name, ctor_args.to_owned()), ..rest],
                 )
               }
               None => ()
@@ -3618,14 +3460,14 @@ fn find_missing_vector(
         TupleType(elem_tys) => {
           let missing = find_missing_vector(
             specialize_tuple_rows(rows, arity),
-            concat_types(elem_tys, tail_tys),
+            [..elem_tys, ..tail_tys],
             ctx,
           )
           match missing {
             Some(vec) => {
-              let tuple_parts = array_slice_patterns(vec, 0, arity)
-              let rest = array_slice_patterns(vec, arity, vec.length())
-              Some(prepend_pattern(TuplePat(tuple_parts), rest))
+              let tuple_parts = vec[0:arity]
+              let rest = vec[arity:vec.length()]
+              Some([TuplePat(tuple_parts.to_owned()), ..rest])
             }
             None => None
           }
@@ -3641,17 +3483,17 @@ fn find_missing_vector(
             ctx,
           )
           match missing_nil {
-            Some(rest) => Some(prepend_pattern(NilPat, rest))
+            Some(rest) => Some([NilPat, ..rest])
             None => {
               let missing_cons = find_missing_vector(
                 specialize_cons_rows(rows),
-                concat_types([elem_ty, head_ty], tail_tys),
+                [elem_ty, head_ty, ..tail_tys],
                 ctx,
               )
               match missing_cons {
                 Some(vec) => {
-                  let rest = array_slice_patterns(vec, 2, vec.length())
-                  Some(prepend_pattern(ConsPat(vec[0], vec[1]), rest))
+                  guard vec is [vec0, vec1, ..rest]
+                  Some([ConsPat(vec0, vec1), ..rest])
                 }
                 None => None
               }
@@ -3665,7 +3507,7 @@ fn find_missing_vector(
 
 ///|
 fn check_match_exhaustiveness(
-  arms : Array[MatchArm],
+  arms : ArrayView[MatchArm],
   scrutinee_ty : Type,
   ctx : InferCtx,
 ) -> Unit raise MiniMLError {
