@@ -89,6 +89,18 @@ test "block let introduces local scope" {
 }
 
 ///|
+test "block enum introduces local constructors" {
+  let code =
+    #| {
+    #|   enum Traffic = Red | Green;
+    #|   match Green with
+    #|   | Red -> 0
+    #|   | Green -> 42
+    #| }
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
 test "block let rec supports local recursion" {
   let code =
     #| {
@@ -106,8 +118,26 @@ test "block can mix expression then let" {
 }
 
 ///|
+test "block can mix expression then enum" {
+  let code =
+    #| {
+    #|   ();
+    #|   enum Answer = Answer(int);
+    #|   match Answer(42) with
+    #|   | Answer(x) -> x
+    #| }
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
 test "block let can end with declaration and produce unit" {
   let code = "{ let x = 1 }"
+  assert_eq(@miniml.interpret(code), "()")
+}
+
+///|
+test "block enum can end with declaration and produce unit" {
+  let code = "{ enum Traffic = Red | Green }"
   assert_eq(@miniml.interpret(code), "()")
 }
 

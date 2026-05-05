@@ -1414,11 +1414,53 @@ fn block_rec_expr(bindings : Array[RecBinding], body : Expr) -> Expr {
 }
 
 ///|
+fn block_enum_expr(decl : EnumDecl, body : Expr) -> Expr {
+  EnumExpr(decl, body)
+}
+
+///|
+fn parse_block_enum_decl(
+  tokens : ArrayView[Token],
+) -> (EnumDecl, ArrayView[Token]) raise MiniMLError {
+  let (name, rest2) = expect_ctor_name(tokens)
+  let (type_params, rest3) = parse_enum_type_params(rest2)
+  let rest4 = expect_token(rest3, EqTok)
+  let variants = []
+  let (first_variant, rest5) = parse_enum_variant_decl(rest4)
+  variants.push(first_variant)
+  for current = rest5 {
+    match current {
+      [BarTok, .. rest6] => {
+        let (variant, rest7) = parse_enum_variant_decl(rest6)
+        variants.push(variant)
+        continue rest7
+      }
+      _ => break (EnumDecl::{ name, type_params, variants }, current)
+    }
+  }
+}
+
+///|
 fn parse_block_items(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
   match tokens {
     [RBraceTok, .. rest] => (UnitExpr, rest)
+    [EnumTok, .. rest] => {
+      let (decl, current) = parse_block_enum_decl(rest)
+      match current {
+        [SemiTok, .. rest2] => {
+          let (body, rest3) = parse_block_items(rest2)
+          (block_enum_expr(decl, body), rest3)
+        }
+        [RBraceTok, .. rest2] => (block_enum_expr(decl, UnitExpr), rest2)
+        [tok, ..] =>
+          raise ParseError(
+            "expected `;` or `}` after block enum, got \{token_to_string(tok)}",
+          )
+        [] => raise ParseError("expected `}` to close block expression")
+      }
+    }
     [LetTok, .. rest] =>
       match rest {
         [RecTok, .. rest2] => {
@@ -1496,6 +1538,10 @@ fn parse_block_items(
           [SemiTok, RBraceTok, .. rest] => {
             trailing_unit = true
             return (seq_from_exprs(exprs, trailing_unit~), rest)
+          }
+          [SemiTok, EnumTok, ..] => {
+            let (body, rest2) = parse_block_items(current[1:])
+            return (SeqExpr(seq_from_exprs(exprs), body), rest2)
           }
           [SemiTok, LetTok, ..] => {
             let (body, rest2) = parse_block_items(current[1:])

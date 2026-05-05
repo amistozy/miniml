@@ -29,6 +29,7 @@ The current implementation supports:
 - tuple and list literals
 - block expressions: `{ ... }`
 - block-local `let` and `let rec` declarations
+- block-local `enum` declarations
 - tuple, list, constructor, wildcard, and unit patterns
 - match guards: `| pat if cond -> expr`
 - sequencing: `expr1; expr2`
@@ -79,8 +80,10 @@ Blocks:
 
 ```ml
 {
-  let x = 41;
-  x + 1
+  enum Answer = Answer(int);
+  let x = Answer(42);
+  match x with
+  | Answer(n) -> n
 }
 ```
 

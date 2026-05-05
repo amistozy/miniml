@@ -127,6 +127,20 @@ test "parse block let desugars to let expression" {
 }
 
 ///|
+test "parse block enum desugars to enum expression" {
+  let expr = parse("{ enum Traffic = Red | Green; Green }")
+  match expr {
+    EnumExpr(decl, VarExpr("Green")) => {
+      assert_eq(decl.name, "Traffic")
+      assert_eq(decl.variants.length(), 2)
+      assert_eq(decl.variants[0].name, "Red")
+      assert_eq(decl.variants[1].name, "Green")
+    }
+    _ => assert_true(false)
+  }
+}
+
+///|
 test "parse block let rec desugars to let rec expression" {
   let expr = parse("{ let rec loop () = 42; loop }")
   match expr {
@@ -169,6 +183,18 @@ test "parse block expression can mix expr then let" {
     expr
     is SeqExpr(UnitExpr, LetExpr(VarPat("x"), None, IntExpr(1), VarExpr("x"))),
   )
+}
+
+///|
+test "parse block expression can mix expr then enum" {
+  let expr = parse("{ (); enum Traffic = Red | Green; Green }")
+  match expr {
+    SeqExpr(UnitExpr, EnumExpr(decl, VarExpr("Green"))) => {
+      assert_eq(decl.name, "Traffic")
+      assert_eq(decl.variants.length(), 2)
+    }
+    _ => assert_true(false)
+  }
 }
 
 ///|
