@@ -20,6 +20,7 @@ pub impl Show for MiniMLError with output(self, logger) {
 pub(all) enum Token {
   IntTok(Int)
   BoolTok(Bool)
+  StringTok(String)
   IdentTok(String)
   CtorTok(String)
   WildcardTok
@@ -65,6 +66,7 @@ pub impl Show for Token with output(self, logger) {
   let s = match self {
     IntTok(n) => "Int(\{n})"
     BoolTok(b) => "Bool(\{b})"
+    StringTok(text) => "String(\{escape_string_literal(text)})"
     IdentTok(name) => "Ident(\{name})"
     CtorTok(name) => "Ctor(\{name})"
     WildcardTok => "_"
@@ -170,6 +172,7 @@ pub(all) struct MatchArm {
 pub(all) enum DeclType {
   IntDeclType
   BoolDeclType
+  StringDeclType
   TypeVarDeclType(String)
   NamedDeclType(String, Array[DeclType])
   TupleDeclType(Array[DeclType])
@@ -211,6 +214,7 @@ pub(all) struct LetBinding {
 pub(all) enum Expr {
   IntExpr(Int)
   BoolExpr(Bool)
+  StringExpr(String)
   VarExpr(String)
   IfExpr(Expr, Expr, Expr)
   EnumExpr(EnumDecl, Expr)
@@ -245,6 +249,7 @@ pub(all) struct Env {
 pub(all) enum Value {
   IntValue(Int)
   BoolValue(Bool)
+  StringValue(String)
   ClosureValue(String, Expr, Env)
   CtorFuncValue(String, Int, Array[Value])
   VariantValue(String, Array[Value])
@@ -262,6 +267,7 @@ pub impl Show for Value with output(self, logger) {
 pub(all) enum Type {
   IntType
   BoolType
+  StringType
   VarType(Int)
   FunType(Type, Type)
   OptionType(Type)
@@ -335,10 +341,33 @@ priv enum MatchMatrixKind {
 }
 
 ///|
+fn escape_string_char(c : Char) -> String {
+  match c {
+    '"' => "\\\""
+    '\\' => "\\\\"
+    '\n' => "\\n"
+    '\r' => "\\r"
+    '\t' => "\\t"
+    _ => c.to_string()
+  }
+}
+
+///|
+fn escape_string_literal(text : String) -> String {
+  let parts = []
+  for c in text[:] {
+    parts.push(escape_string_char(c))
+  }
+  let escaped = parts.join("")
+  "\"\{escaped}\""
+}
+
+///|
 fn expr_to_string(expr : Expr) -> String {
   match expr {
     IntExpr(n) => n.to_string()
     BoolExpr(b) => b.to_string()
+    StringExpr(text) => escape_string_literal(text)
     VarExpr(name) => name
     IfExpr(cond, then_, else_) =>
       "if \{expr_to_string(cond)} then \{expr_to_string(then_)} else \{expr_to_string(else_)}"
@@ -410,6 +439,7 @@ fn decl_type_to_string(type_ : DeclType) -> String {
   match type_ {
     IntDeclType => "int"
     BoolDeclType => "bool"
+    StringDeclType => "string"
     TypeVarDeclType(name) => name
     NamedDeclType(name, args) =>
       if args.is_empty() {
@@ -666,6 +696,7 @@ fn value_to_string(value : Value) -> String {
   match value {
     IntValue(n) => n.to_string()
     BoolValue(b) => b.to_string()
+    StringValue(text) => escape_string_literal(text)
     ClosureValue(_) => "<fun>"
     CtorFuncValue(name, arity, values) =>
       "<ctor \{name}/\{arity - values.length()}>"
@@ -808,6 +839,24 @@ fn read_ident(code : StringView, acc? : String = "") -> (String, StringView) {
 }
 
 ///|
+fn read_string_body(
+  code : StringView,
+  acc? : String = "",
+) -> (String, StringView) raise MiniMLError {
+  match code {
+    ['"', .. rest] => (acc, rest)
+    ['\\', 'n', .. rest] => read_string_body(rest, acc=acc + "\n")
+    ['\\', 'r', .. rest] => read_string_body(rest, acc=acc + "\r")
+    ['\\', 't', .. rest] => read_string_body(rest, acc=acc + "\t")
+    ['\\', '"', .. rest] => read_string_body(rest, acc=acc + "\"")
+    ['\\', '\\', .. rest] => read_string_body(rest, acc=acc + "\\")
+    ['\\', c, ..] => raise LexError("unsupported string escape `\\\{c}`")
+    [c, .. rest] => read_string_body(rest, acc=acc + c.to_string())
+    [] => raise LexError("unterminated string literal")
+  }
+}
+
+///|
 fn skip_line_comment(code : StringView) -> StringView {
   match code {
     ['\n', .. rest] => rest
@@ -858,6 +907,11 @@ pub fn tokenize(code : String) -> ArrayView[Token] raise MiniMLError {
       [.. "::", .. next] => {
         tokens.push(ConsTok)
         continue next
+      }
+      ['"', .. next] => {
+        let (text, rest2) = read_string_body(next)
+        tokens.push(StringTok(text))
+        continue rest2
       }
       ['(', .. next] => {
         tokens.push(LParenTok)
@@ -967,6 +1021,7 @@ fn is_atom_start(token : Token) -> Bool {
   match token {
     IntTok(_)
     | BoolTok(_)
+    | StringTok(_)
     | IdentTok(_)
     | CtorTok(_)
     | LParenTok
@@ -1206,6 +1261,7 @@ fn parse_atom(
   match tok {
     IntTok(n) => (IntExpr(n), rest)
     BoolTok(b) => (BoolExpr(b), rest)
+    StringTok(text) => (StringExpr(text), rest)
     IdentTok(name) => (VarExpr(name), rest)
     CtorTok(name) =>
       match rest {
@@ -1489,6 +1545,7 @@ fn parse_decl_type_atom(
   match tok {
     IdentTok("int") => (IntDeclType, rest)
     IdentTok("bool") => (BoolDeclType, rest)
+    IdentTok("string") => (StringDeclType, rest)
     IdentTok(name) => (TypeVarDeclType(name), rest)
     CtorTok(name) =>
       match rest {
@@ -1929,6 +1986,7 @@ fn value_eq(lhs : Value, rhs : Value) -> Bool raise MiniMLError {
   match (lhs, rhs) {
     (IntValue(a), IntValue(b)) => a == b
     (BoolValue(a), BoolValue(b)) => a == b
+    (StringValue(a), StringValue(b)) => a == b
     (VariantValue(name1, xs), VariantValue(name2, ys)) => {
       if name1 != name2 || xs.length() != ys.length() {
         return false
@@ -1971,6 +2029,7 @@ fn resolve_decl_type(
   match type_ {
     IntDeclType => IntType
     BoolDeclType => BoolType
+    StringDeclType => StringType
     TypeVarDeclType(name) =>
       match type_params.get(name) {
         Some(type_) => type_
@@ -2015,6 +2074,7 @@ fn resolve_annotation_type(
   match type_ {
     IntDeclType => IntType
     BoolDeclType => BoolType
+    StringDeclType => StringType
     TypeVarDeclType(name) =>
       raise TypeError("type annotation cannot use free type variable `\{name}`")
     NamedDeclType(name, args) =>
@@ -2229,6 +2289,7 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
   match expr {
     IntExpr(n) => IntValue(n)
     BoolExpr(b) => BoolValue(b)
+    StringExpr(text) => StringValue(text)
     VarExpr(name) => env.lookup(name)
     IfExpr(cond, then_, else_) =>
       match eval_expr(cond, env) {
@@ -2365,6 +2426,7 @@ fn type_to_string_with(type_ : Type, printer : TypePrinter) -> String {
   match type_ {
     IntType => "int"
     BoolType => "bool"
+    StringType => "string"
     VarType(id) => type_var_name(printer, id)
     FunType(arg, ret) => {
       let arg_s = match arg {
@@ -2428,6 +2490,7 @@ fn prune_type(type_ : Type, ctx : InferCtx) -> Type {
         None => VarType(id)
       }
     FunType(arg, ret) => FunType(prune_type(arg, ctx), prune_type(ret, ctx))
+    StringType => StringType
     OptionType(elem) => OptionType(prune_type(elem, ctx))
     NamedType(name, id, args) =>
       NamedType(name, id, args.map(t => prune_type(t, ctx)))
@@ -2441,6 +2504,7 @@ fn prune_type(type_ : Type, ctx : InferCtx) -> Type {
 fn occurs_in(var_id : Int, type_ : Type, ctx : InferCtx) -> Bool {
   match prune_type(type_, ctx) {
     VarType(id) => id == var_id
+    StringType => false
     FunType(arg, ret) =>
       occurs_in(var_id, arg, ctx) || occurs_in(var_id, ret, ctx)
     OptionType(elem) => occurs_in(var_id, elem, ctx)
@@ -2491,6 +2555,7 @@ fn unify(
     (t, VarType(b)) => bind_type_var(b, t, ctx)
     (IntType, IntType) => ()
     (BoolType, BoolType) => ()
+    (StringType, StringType) => ()
     (FunType(arg1, ret1), FunType(arg2, ret2)) => {
       unify(arg1, arg2, ctx)
       unify(ret1, ret2, ctx)
@@ -2545,7 +2610,7 @@ fn diff_vars(lhs : Array[Int], rhs : Array[Int]) -> Array[Int] {
 ///|
 fn ftv_type(type_ : Type, ctx : InferCtx) -> Array[Int] {
   match prune_type(type_, ctx) {
-    IntType | BoolType => []
+    IntType | BoolType | StringType => []
     VarType(id) => [id]
     FunType(arg, ret) => {
       let vars = ftv_type(arg, ctx)
@@ -2600,6 +2665,7 @@ fn instantiate_type(
   match prune_type(type_, ctx) {
     IntType => IntType
     BoolType => BoolType
+    StringType => StringType
     VarType(id) =>
       match mapping.get(id) {
         Some(t) => t
@@ -3709,6 +3775,7 @@ fn infer_expr(
   match expr {
     IntExpr(_) => IntType
     BoolExpr(_) => BoolType
+    StringExpr(_) => StringType
     VarExpr(name) => instantiate(env.lookup(name), ctx)
     IfExpr(cond, then_, else_) => {
       let cond_type = infer_expr(cond, env, ctx)

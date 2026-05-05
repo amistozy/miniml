@@ -45,6 +45,7 @@ pub impl Show for BinaryOp
 pub(all) enum DeclType {
   IntDeclType
   BoolDeclType
+  StringDeclType
   TypeVarDeclType(String)
   NamedDeclType(String, Array[DeclType])
   TupleDeclType(Array[DeclType])
@@ -72,6 +73,7 @@ pub(all) struct Env {
 pub(all) enum Expr {
   IntExpr(Int)
   BoolExpr(Bool)
+  StringExpr(String)
   VarExpr(String)
   IfExpr(Expr, Expr, Expr)
   EnumExpr(EnumDecl, Expr)
@@ -132,6 +134,7 @@ pub(all) struct Scheme {
 pub(all) enum Token {
   IntTok(Int)
   BoolTok(Bool)
+  StringTok(String)
   IdentTok(String)
   CtorTok(String)
   WildcardTok
@@ -176,6 +179,7 @@ pub impl Show for Token
 pub(all) enum Type {
   IntType
   BoolType
+  StringType
   VarType(Int)
   FunType(Type, Type)
   OptionType(Type)
@@ -192,6 +196,7 @@ pub(all) struct TypeEnv {
 pub(all) enum Value {
   IntValue(Int)
   BoolValue(Bool)
+  StringValue(String)
   ClosureValue(String, Expr, Env)
   CtorFuncValue(String, Int, Array[Value])
   VariantValue(String, Array[Value])

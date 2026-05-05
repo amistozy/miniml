@@ -16,7 +16,7 @@ It includes:
 
 The current language supports:
 
-- integers and booleans
+- integers, booleans, and strings
 - variables, `if`, `fun`, application
 - `let` and `let rec`
 - tuples and lists
@@ -48,6 +48,13 @@ let rec sum xs =
   | x :: rest -> x + sum rest
 in
 sum [1, 2, 3, 4]
+```
+
+Strings:
+
+```ml
+let greet : string = "hello" in
+if greet == "hello" then greet else "bye"
 ```
 
 Match guards:

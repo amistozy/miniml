@@ -43,6 +43,17 @@ test "infer polymorphic identity" {
 }
 
 ///|
+test "string literal evaluates and prints escaped" {
+  let code = "\"hi\\nmini\""
+  assert_eq(@miniml.interpret(code), "\"hi\\nmini\"")
+}
+
+///|
+test "string literal infers string type" {
+  assert_eq(@miniml.infer("\"hello\""), "string")
+}
+
+///|
 test "match guard evaluates" {
   let code =
     #| match [1, 2] with
@@ -245,6 +256,12 @@ test "annotation mismatch is rejected" {
 }
 
 ///|
+test "string annotation evaluates" {
+  let code = "let greet : string = \"hello\" in greet"
+  assert_eq(@miniml.interpret(code), "\"hello\"")
+}
+
+///|
 test "free type variable annotation is rejected" {
   let msg = try {
     let _ = @miniml.infer("fun (x : a) -> x")
@@ -271,6 +288,12 @@ test "expression ascription constrains type" {
 ///|
 test "expression ascription inferred type is preserved" {
   assert_eq(@miniml.infer("(Some 1 : int option)"), "int option")
+}
+
+///|
+test "string equality works" {
+  let code = "if \"mini\" == \"mini\" then 42 else 0"
+  assert_eq(@miniml.interpret(code), "42")
 }
 
 ///|
@@ -329,6 +352,15 @@ test "let function sugar supports pattern parameter" {
 test "let function sugar pattern parameter constrains function type" {
   let code = "let swap ((x, y), z) = (z, x, y) in swap"
   assert_eq(@miniml.infer(code), "(('t0 * 't1) * 't2) -> ('t2 * 't0 * 't1)")
+}
+
+///|
+test "enum can carry string payload" {
+  let code =
+    #| enum Message = Text(string) in
+    #| match Text("hello") with
+    #| | Text(msg) -> msg
+  assert_eq(@miniml.interpret(code), "\"hello\"")
 }
 
 ///|

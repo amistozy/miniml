@@ -28,6 +28,12 @@ test "tokenize type annotation colon" {
 }
 
 ///|
+test "tokenize string literal" {
+  let tokens = tokenize("\"hi\\nmini\"")
+  assert_eq(tokens[0], StringTok("hi\nmini"))
+}
+
+///|
 test "tokenize let rec and keyword" {
   let tokens = tokenize("let rec even n = odd n and odd n = even n in even 0")
   assert_eq(tokens[0], LetTok)
@@ -69,6 +75,12 @@ test "parse expression ascription" {
       OptionDeclType(IntDeclType)
     ),
   )
+}
+
+///|
+test "parse string literal expression" {
+  let expr = parse("\"hello\"")
+  assert_true(expr is StringExpr("hello"))
 }
 
 ///|
@@ -178,6 +190,20 @@ test "parse multi parameter let rec with return annotation" {
         AscribeExpr(BinaryExpr(Add, VarExpr("x"), VarExpr("y")), IntDeclType)
       ),
       VarExpr("add")
+    ),
+  )
+}
+
+///|
+test "parse string annotation" {
+  let expr = parse("let msg : string = \"hi\" in msg")
+  assert_true(
+    expr
+    is LetExpr(
+      VarPat("msg"),
+      Some(StringDeclType),
+      StringExpr("hi"),
+      VarExpr("msg")
     ),
   )
 }
