@@ -462,15 +462,10 @@ fn is_binder_start(token : Token) -> Bool {
 }
 
 ///|
-fn params_to_expr(params : Array[FnParam], body : Expr) -> Expr {
-  let mut result = body
-  let mut idx = params.length()
-  while idx > 0 {
-    idx = idx - 1
-    let param = params[idx]
-    result = FunExpr(param.name, param.annot, result)
-  }
-  result
+fn params_to_expr(params : ArrayView[FnParam], body : Expr) -> Expr {
+  params.rev_fold(init=body, (acc, param) => {
+    FunExpr(param.name, param.annot, acc)
+  })
 }
 
 ///|
@@ -488,11 +483,7 @@ fn make_rec_binding(
   return_annot : DeclType?,
   fun_body0 : Expr,
 ) -> RecBinding {
-  let first = params[0]
-  let tail = Array::new()
-  for i = 1; i < params.length(); i = i + 1 {
-    tail.push(params[i])
-  }
+  guard params is [first, .. tail]
   let fun_body = if tail.is_empty() {
     fun_body0
   } else {
@@ -569,17 +560,16 @@ fn pattern_hint_string(pattern : Pattern) -> String {
 
 ///|
 fn list_hint_string(pattern : Pattern) -> String? {
-  let items = Array::new()
-  let mut current = pattern
-  while true {
+  let items = []
+  for current = pattern {
     match current {
       NilPat => {
         let joined = items.join(", ")
-        return Some("[\{joined}]")
+        break Some("[\{joined}]")
       }
       ConsPat(head, tail) => {
         items.push(pattern_hint_string(head))
-        current = tail
+        continue tail
       }
       WildcardPat | VarPat(_) => {
         let body = if items.is_empty() {
@@ -587,19 +577,18 @@ fn list_hint_string(pattern : Pattern) -> String? {
         } else {
           items.join(", ") + ", ..."
         }
-        return Some("[\{body}]")
+        break Some("[\{body}]")
       }
       _ =>
         if items.is_empty() {
-          return None
+          break None
         } else {
           let joined = items.join(", ")
           let tail = pattern_hint_string(current)
-          return Some("[\{joined} | \{tail}]")
+          break Some("[\{joined} | \{tail}]")
         }
     }
   }
-  None
 }
 
 ///|
@@ -640,14 +629,13 @@ fn ctor_value_to_string(name : String, values : Array[Value]) -> String {
 
 ///|
 fn list_value_to_string(value : Value) -> String {
-  let items = Array::new()
-  let mut current = value
-  while true {
+  let items = []
+  for current = value {
     match current {
       NilValue => break
       ConsValue(head, tail) => {
         items.push(value_to_string(head))
-        current = tail
+        continue tail
       }
       _ => {
         items.push("| " + value_to_string(current))
@@ -664,7 +652,7 @@ fn value_to_string(value : Value) -> String {
   match value {
     IntValue(n) => n.to_string()
     BoolValue(b) => b.to_string()
-    ClosureValue(_, _, _) => "<fun>"
+    ClosureValue(_) => "<fun>"
     CtorFuncValue(name, arity, values) =>
       "<ctor \{name}/\{arity - values.length()}>"
     VariantValue(name, values) => ctor_value_to_string(name, values)
@@ -673,13 +661,13 @@ fn value_to_string(value : Value) -> String {
       "(\{items})"
     }
     NilValue => "[]"
-    ConsValue(_, _) => list_value_to_string(value)
+    ConsValue(_) => list_value_to_string(value)
   }
 }
 
 ///|
 fn Env::new(parent? : Env? = None) -> Env {
-  Env::{ bindings: Map::new(), parent }
+  Env::{ bindings: {}, parent }
 }
 
 ///|
@@ -715,7 +703,7 @@ fn Env::lookup(self : Env, name : String) -> Value raise MiniMLError {
 
 ///|
 fn TypeEnv::new(parent? : TypeEnv? = None) -> TypeEnv {
-  TypeEnv::{ bindings: Map::new(), parent }
+  TypeEnv::{ bindings: {}, parent }
 }
 
 ///|
@@ -760,16 +748,16 @@ fn InferCtx::new() -> InferCtx {
   InferCtx::{
     next_id: 0,
     next_enum_id: 0,
-    subst: Map::new(),
-    enum_defs: Map::new(),
-    type_name_to_enum: Map::new(),
-    ctor_to_enum: Map::new(),
+    subst: {},
+    enum_defs: {},
+    type_name_to_enum: {},
+    ctor_to_enum: {},
   }
 }
 
 ///|
 fn TypePrinter::new() -> TypePrinter {
-  TypePrinter::{ names: Map::new(), next_id: 0 }
+  TypePrinter::{ names: {}, next_id: 0 }
 }
 
 ///|
@@ -816,112 +804,111 @@ fn skip_line_comment(code : StringView) -> StringView {
 
 ///|
 pub fn tokenize(code : String) -> Array[Token] raise MiniMLError {
-  let tokens = Array::new()
-  let mut rest = code[:]
-  while true {
+  let tokens = []
+  for rest = code[:] {
     match rest {
       [] => {
         tokens.push(EOFTok)
         break
       }
-      [' ' | '\t' | '\r' | '\n', .. next] => rest = next
-      [.. "//", .. next] => rest = skip_line_comment(next)
+      [' ' | '\t' | '\r' | '\n', .. next] => continue next
+      [.. "//", .. next] => continue skip_line_comment(next)
       [.. "->", .. next] => {
         tokens.push(ArrowTok)
-        rest = next
+        continue next
       }
       [.. "==", .. next] => {
         tokens.push(EqEqTok)
-        rest = next
+        continue next
       }
       [.. "!=", .. next] => {
         tokens.push(NotEqTok)
-        rest = next
+        continue next
       }
       [.. "<=", .. next] => {
         tokens.push(LeTok)
-        rest = next
+        continue next
       }
       [.. ">=", .. next] => {
         tokens.push(GeTok)
-        rest = next
+        continue next
       }
       [.. "&&", .. next] => {
         tokens.push(AndTok)
-        rest = next
+        continue next
       }
       [.. "||", .. next] => {
         tokens.push(OrTok)
-        rest = next
+        continue next
       }
       [.. "::", .. next] => {
         tokens.push(ConsTok)
-        rest = next
+        continue next
       }
       ['(', .. next] => {
         tokens.push(LParenTok)
-        rest = next
+        continue next
       }
       [')', .. next] => {
         tokens.push(RParenTok)
-        rest = next
+        continue next
       }
       ['[', .. next] => {
         tokens.push(LBracketTok)
-        rest = next
+        continue next
       }
       [':', .. next] => {
         tokens.push(ColonTok)
-        rest = next
+        continue next
       }
       [']', .. next] => {
         tokens.push(RBracketTok)
-        rest = next
+        continue next
       }
       [',', .. next] => {
         tokens.push(CommaTok)
-        rest = next
+        continue next
       }
       ['|', .. next] => {
         tokens.push(BarTok)
-        rest = next
+        continue next
       }
       ['+', .. next] => {
         tokens.push(PlusTok)
-        rest = next
+        continue next
       }
       ['-', .. next] => {
         tokens.push(MinusTok)
-        rest = next
+        continue next
       }
       ['*', .. next] => {
         tokens.push(StarTok)
-        rest = next
+        continue next
       }
       ['/', .. next] => {
         tokens.push(SlashTok)
-        rest = next
+        continue next
       }
       ['=', .. next] => {
         tokens.push(EqTok)
-        rest = next
+        continue next
       }
       ['<', .. next] => {
         tokens.push(LtTok)
-        rest = next
+        continue next
       }
       ['>', .. next] => {
         tokens.push(GtTok)
-        rest = next
+        continue next
       }
       ['!', .. next] => {
         tokens.push(NotTok)
-        rest = next
+        continue next
       }
       [c, ..] if is_digit(c) => {
         let (n, next) = read_number(rest)
         tokens.push(IntTok(n))
-        rest = next
+        continue next
       }
       [c, ..] if is_alpha(c) || c == '_' => {
         let (ident, next) = read_ident(rest)
@@ -948,7 +935,7 @@ pub fn tokenize(code : String) -> Array[Token] raise MiniMLError {
             }
         }
         tokens.push(token)
-        rest = next
+        continue next
       }
       [c, ..] => raise LexError("unexpected character `\{c.to_string()}`")
     }
@@ -1039,16 +1026,15 @@ fn parse_ctor_pattern_args(
   name : String,
   tokens : ArrayView[Token],
 ) -> (Pattern, ArrayView[Token]) raise MiniMLError {
-  let patterns = Array::new()
+  let patterns = []
   let (first, rest) = parse_pattern(tokens)
   patterns.push(first)
-  let mut current = rest
-  while true {
+  for current = rest {
     match current {
       [CommaTok, .. rest2] => {
         let (next_pat, rest3) = parse_pattern(rest2)
         patterns.push(next_pat)
-        current = rest3
+        continue rest3
       }
       [RParenTok, .. rest2] => return (CtorPat(name, patterns), rest2)
       [tok, ..] =>
@@ -1057,19 +1043,14 @@ fn parse_ctor_pattern_args(
         )
       [] => raise ParseError("expected `)` to close constructor pattern")
     }
+  } nobreak {
+    (CtorPat(name, patterns), current)
   }
-  (CtorPat(name, patterns), current)
 }
 
 ///|
 fn list_pattern_from_array(patterns : Array[Pattern]) -> Pattern {
-  let mut result = NilPat
-  let mut idx = patterns.length()
-  while idx > 0 {
-    idx = idx - 1
-    result = ConsPat(patterns[idx], result)
-  }
-  result
+  patterns.rev_fold(init=NilPat, (acc, pattern) => ConsPat(pattern, acc))
 }
 
 ///|
@@ -1097,16 +1078,15 @@ fn parse_pattern_atom(
       match rest {
         [RBracketTok, .. rest2] => (NilPat, rest2)
         _ => {
-          let patterns = Array::new()
+          let patterns = []
           let (first, rest2) = parse_pattern(rest)
           patterns.push(first)
-          let mut current = rest2
-          while true {
+          for current = rest2 {
             match current {
               [CommaTok, .. rest3] => {
                 let (next_pat, rest4) = parse_pattern(rest3)
                 patterns.push(next_pat)
-                current = rest4
+                continue rest4
               }
               [RBracketTok, .. rest3] =>
                 return (list_pattern_from_array(patterns), rest3)
@@ -1116,8 +1096,9 @@ fn parse_pattern_atom(
                 )
               [] => raise ParseError("expected `]` to close list pattern")
             }
+          } nobreak {
+            (NilPat, current)
           }
-          (NilPat, current)
         }
       }
     LParenTok =>
@@ -1128,7 +1109,7 @@ fn parse_pattern_atom(
           let (first, rest2) = parse_pattern(rest)
           match rest2 {
             [CommaTok, .. rest3] => {
-              let patterns = Array::new()
+              let patterns = []
               patterns.push(first)
               let mut current = rest3
               while true {
@@ -1189,7 +1170,7 @@ fn parse_ctor_expr_args(
   name : String,
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
-  let args = Array::new()
+  let args = []
   let (first, rest) = parse_expr(tokens)
   args.push(first)
   let mut current = rest
@@ -1231,7 +1212,7 @@ fn parse_atom(
       match rest {
         [RBracketTok, .. rest2] => (ListExpr([]), rest2)
         _ => {
-          let exprs = Array::new()
+          let exprs = []
           let (first, rest2) = parse_expr(rest)
           exprs.push(first)
           let mut current = rest2
@@ -1261,7 +1242,7 @@ fn parse_atom(
           let (first, rest2) = parse_expr(rest)
           match rest2 {
             [CommaTok, .. rest3] => {
-              let exprs = Array::new()
+              let exprs = []
               exprs.push(first)
               let mut current = rest3
               while true {
@@ -1513,7 +1494,7 @@ fn parse_match(
   }
   let (scrutinee, rest2) = parse_expr(rest)
   let rest3 = expect_token(rest2, WithTok)
-  let arms = Array::new()
+  let arms = []
   let mut current = rest3
   let (first_arm, rest4) = parse_match_arm(current)
   arms.push(first_arm)
@@ -1545,7 +1526,7 @@ fn parse_decl_type_atom(
     CtorTok(name) =>
       match rest {
         [LBracketTok, .. rest2] => {
-          let args = Array::new()
+          let args = []
           let (first, rest3) = parse_decl_type(rest2)
           args.push(first)
           let mut current = rest3
@@ -1576,7 +1557,7 @@ fn parse_decl_type_atom(
           let (first, rest2) = parse_decl_type(rest)
           match rest2 {
             [StarTok, .. rest3] => {
-              let items = Array::new()
+              let items = []
               items.push(first)
               let mut current = rest3
               while true {
@@ -1677,7 +1658,7 @@ fn parse_binder(
 fn parse_binder_list(
   tokens : ArrayView[Token],
 ) -> (Array[FnParam], ArrayView[Token]) raise MiniMLError {
-  let params = Array::new()
+  let params = []
   let mut current = tokens
   while true {
     match current {
@@ -1740,7 +1721,7 @@ fn parse_enum_variant_decl(
   let (name, rest) = expect_ctor_name(tokens)
   match rest {
     [LParenTok, .. rest2] => {
-      let fields = Array::new()
+      let fields = []
       let (first, rest3) = parse_decl_type(rest2)
       fields.push(first)
       let mut current = rest3
@@ -1772,7 +1753,7 @@ fn parse_enum_type_params(
 ) -> (Array[String], ArrayView[Token]) raise MiniMLError {
   match tokens {
     [LBracketTok, .. rest] => {
-      let params = Array::new()
+      let params = []
       let (first, rest2) = expect_ident(rest)
       params.push(first)
       let mut current = rest2
@@ -1810,7 +1791,7 @@ fn parse_enum(
   let (name, rest2) = expect_ctor_name(rest)
   let (type_params, rest3) = parse_enum_type_params(rest2)
   let rest4 = expect_token(rest3, EqTok)
-  let variants = Array::new()
+  let variants = []
   let (first_variant, rest5) = parse_enum_variant_decl(rest4)
   variants.push(first_variant)
   let mut current = rest5
@@ -1879,7 +1860,7 @@ fn parse_let(
   if tok2 == RecTok {
     let (name, rest3) = expect_ident(rest2)
     let (first_binding, rest4) = parse_rec_binding(name, rest3)
-    let bindings = Array::new()
+    let bindings = []
     bindings.push(first_binding)
     let mut current = rest4
     while true {
@@ -1914,7 +1895,7 @@ fn parse_let(
   } else {
     let (pattern, rest3) = parse_pattern(rest)
     let (first_binding, rest4) = parse_nonrec_binding(pattern, rest3)
-    let bindings = Array::new()
+    let bindings = []
     bindings.push(first_binding)
     let mut current = rest4
     while true {
@@ -2223,7 +2204,7 @@ fn eval_rec_group(
   body : Expr,
 ) -> Value raise MiniMLError {
   let mut rec_env = env
-  let cells = Array::new()
+  let cells = []
   for binding in bindings {
     let cell : Ref[Value?] = @ref.new(None)
     rec_env = rec_env.extend_cell(binding.name, cell)
@@ -2243,7 +2224,7 @@ fn eval_let_group(
   env : Env,
   body : Expr,
 ) -> Value raise MiniMLError {
-  let values = Array::new()
+  let values = []
   for binding in bindings {
     values.push(eval_expr(binding.bound, env))
   }
@@ -2635,14 +2616,14 @@ fn ftv_type(type_ : Type, ctx : InferCtx) -> Array[Int] {
     }
     OptionType(elem) => ftv_type(elem, ctx)
     NamedType(_, _, args) => {
-      let vars = Array::new()
+      let vars = []
       for t in args {
         append_unique(vars, ftv_type(t, ctx))
       }
       vars
     }
     TupleType(types) => {
-      let vars = Array::new()
+      let vars = []
       for t in types {
         append_unique(vars, ftv_type(t, ctx))
       }
@@ -2659,7 +2640,7 @@ fn ftv_scheme(scheme : Scheme, ctx : InferCtx) -> Array[Int] {
 
 ///|
 fn ftv_type_env(env : TypeEnv, ctx : InferCtx) -> Array[Int] {
-  let vars = Array::new()
+  let vars = []
   for scheme in env.bindings.values() {
     append_unique(vars, ftv_scheme(scheme, ctx))
   }
@@ -2702,7 +2683,7 @@ fn instantiate_type(
 
 ///|
 fn instantiate(scheme : Scheme, ctx : InferCtx) -> Type {
-  let mapping = Map::new()
+  let mapping = {}
   for id in scheme.vars {
     mapping.set(id, fresh_type_var(ctx))
   }
@@ -2737,7 +2718,7 @@ fn lookup_enum_variant(
 
 ///|
 fn make_enum_type_args(decl : EnumDecl, ctx : InferCtx) -> Array[Type] {
-  let args = Array::new()
+  let args = []
   for _ in decl.type_params {
     args.push(fresh_type_var(ctx))
   }
@@ -2749,7 +2730,7 @@ fn enum_type_param_map(
   decl : EnumDecl,
   args : Array[Type],
 ) -> Map[String, Type] {
-  let map = Map::new()
+  let map = {}
   for i = 0; i < decl.type_params.length() && i < args.length(); i = i + 1 {
     map.set(decl.type_params[i], args[i])
   }
@@ -2758,7 +2739,7 @@ fn enum_type_param_map(
 
 ///|
 fn scheme_vars_from_types(types : Array[Type]) -> Array[Int] {
-  let vars = Array::new()
+  let vars = []
   for type_ in types {
     match type_ {
       VarType(id) => vars.push(id)
@@ -2847,7 +2828,7 @@ fn infer_pattern(
           }
       }
     TuplePat(patterns) => {
-      let element_types = Array::new()
+      let element_types = []
       for _ in patterns {
         element_types.push(fresh_type_var(ctx))
       }
@@ -3040,7 +3021,7 @@ fn match_matrix_kind(ty : Type, ctx : InferCtx) -> MatchMatrixKind {
 
 ///|
 fn default_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
-  let result = Array::new()
+  let result = []
   for row in rows {
     if row.length() > 0 && pattern_is_wild(row[0]) {
       result.push(drop_first_pattern(row))
@@ -3054,7 +3035,7 @@ fn specialize_bool_rows(
   rows : Array[Array[Pattern]],
   target : Bool,
 ) -> Array[Array[Pattern]] {
-  let result = Array::new()
+  let result = []
   for row in rows {
     guard row.length() > 0 else { continue }
     let head = row[0]
@@ -3073,7 +3054,7 @@ fn specialize_bool_rows(
 
 ///|
 fn specialize_none_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
-  let result = Array::new()
+  let result = []
   for row in rows {
     guard row.length() > 0 else { continue }
     let head = row[0]
@@ -3092,7 +3073,7 @@ fn specialize_none_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
 
 ///|
 fn specialize_some_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
-  let result = Array::new()
+  let result = []
   for row in rows {
     guard row.length() > 0 else { continue }
     let head = row[0]
@@ -3115,7 +3096,7 @@ fn specialize_enum_rows(
   ctor_name : String,
   arity : Int,
 ) -> Array[Array[Pattern]] {
-  let result = Array::new()
+  let result = []
   for row in rows {
     guard row.length() > 0 else { continue }
     let head = row[0]
@@ -3142,7 +3123,7 @@ fn specialize_int_rows(
   rows : Array[Array[Pattern]],
   target : Int,
 ) -> Array[Array[Pattern]] {
-  let result = Array::new()
+  let result = []
   for row in rows {
     guard row.length() > 0 else { continue }
     let head = row[0]
@@ -3164,7 +3145,7 @@ fn specialize_tuple_rows(
   rows : Array[Array[Pattern]],
   arity : Int,
 ) -> Array[Array[Pattern]] {
-  let result = Array::new()
+  let result = []
   for row in rows {
     guard row.length() > 0 else { continue }
     let head = row[0]
@@ -3184,7 +3165,7 @@ fn specialize_tuple_rows(
 
 ///|
 fn specialize_nil_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
-  let result = Array::new()
+  let result = []
   for row in rows {
     guard row.length() > 0 else { continue }
     let head = row[0]
@@ -3203,7 +3184,7 @@ fn specialize_nil_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
 
 ///|
 fn specialize_cons_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
-  let result = Array::new()
+  let result = []
   for row in rows {
     guard row.length() > 0 else { continue }
     let head = row[0]
@@ -3278,7 +3259,7 @@ fn patterns_cover_vector(
                 _ => []
               },
             )
-            let field_tys = Array::new()
+            let field_tys = []
             for field in variant.fields {
               field_tys.push(
                 resolve_decl_type(field, decl.name, enum_id, type_params, ctx),
@@ -3392,7 +3373,7 @@ fn useful_vector(
                     _ => []
                   },
                 )
-                let field_tys = Array::new()
+                let field_tys = []
                 for field in variant.fields {
                   field_tys.push(
                     resolve_decl_type(
@@ -3458,7 +3439,7 @@ fn useful_vector(
                   if variant.fields.length() != patterns.length() {
                     false
                   } else {
-                    let field_tys = Array::new()
+                    let field_tys = []
                     for field in variant.fields {
                       field_tys.push(
                         resolve_decl_type(
@@ -3619,7 +3600,7 @@ fn find_missing_vector(
               variant.name,
               variant.fields.length(),
             )
-            let field_tys = Array::new()
+            let field_tys = []
             for field in variant.fields {
               field_tys.push(
                 resolve_decl_type(field, decl.name, enum_id, type_params, ctx),
@@ -3705,7 +3686,7 @@ fn check_match_exhaustiveness(
   scrutinee_ty : Type,
   ctx : InferCtx,
 ) -> Unit raise MiniMLError {
-  let rows = Array::new()
+  let rows = []
   for arm in arms {
     if arm.guard_ is None {
       rows.push([arm.pattern])
@@ -3731,7 +3712,7 @@ fn infer_enum_body(
   ctx : InferCtx,
 ) -> Type raise MiniMLError {
   let enum_id = fresh_enum_id(ctx)
-  let type_args = Array::new()
+  let type_args = []
   for _ in decl.type_params {
     type_args.push(fresh_type_var(ctx))
   }
@@ -3739,7 +3720,7 @@ fn infer_enum_body(
   let old_type_binding = ctx.type_name_to_enum.get(decl.name)
   ctx.enum_defs.set(enum_id, decl)
   ctx.type_name_to_enum.set(decl.name, enum_id)
-  let old_ctor_enums = Array::new()
+  let old_ctor_enums = []
   let mut body_env = env
   for variant in decl.variants {
     old_ctor_enums.push((variant.name, ctx.ctor_to_enum.get(variant.name)))
@@ -3801,7 +3782,7 @@ fn infer_rec_group_body(
   env : TypeEnv,
   ctx : InferCtx,
 ) -> Type raise MiniMLError {
-  let func_types = Array::new()
+  let func_types = []
   let mut env1 = env
   for binding in bindings {
     let func_type = rec_binding_func_type(binding, ctx)
@@ -3836,7 +3817,7 @@ fn infer_let_group_body(
   env : TypeEnv,
   ctx : InferCtx,
 ) -> Type raise MiniMLError {
-  let bound_types = Array::new()
+  let bound_types = []
   for binding in bindings {
     let bound_type = infer_expr(binding.bound, env, ctx)
     match binding.annot {
@@ -3988,7 +3969,7 @@ fn infer_expr(
       BoolType
     }
     TupleExpr(exprs) => {
-      let types = Array::new()
+      let types = []
       for expr in exprs {
         types.push(infer_expr(expr, env, ctx))
       }
@@ -4014,7 +3995,7 @@ fn infer_expr(
       }
       let scrutinee_type = infer_expr(scrutinee, env, ctx)
       let result_type = fresh_type_var(ctx)
-      let covered_rows = Array::new()
+      let covered_rows = []
       for arm in arms {
         let arm_env = infer_pattern(arm.pattern, scrutinee_type, env, ctx)
         let checked_scrutinee_type = prune_type(scrutinee_type, ctx)
