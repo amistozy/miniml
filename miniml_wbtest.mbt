@@ -22,6 +22,12 @@ test "parse tuple let pattern" {
 }
 
 ///|
+test "parse unit literal" {
+  let expr = parse("()")
+  assert_true(expr is UnitExpr)
+}
+
+///|
 test "tokenize type annotation colon" {
   let tokens = tokenize("fun (x : int) -> x")
   assert_eq(tokens[3], ColonTok)
@@ -81,6 +87,14 @@ test "parse expression ascription" {
 test "parse string literal expression" {
   let expr = parse("\"hello\"")
   assert_true(expr is StringExpr("hello"))
+}
+
+///|
+test "parse unit annotation" {
+  let expr = parse("let x : unit = () in x")
+  assert_true(
+    expr is LetExpr(VarPat("x"), Some(UnitDeclType), UnitExpr, VarExpr("x")),
+  )
 }
 
 ///|
@@ -298,6 +312,19 @@ test "parse list pattern match" {
       assert_true(arms[1].pattern is NilPat)
       assert_true(arms[1].guard_ is None)
       assert_true(arms[1].body is IntExpr(0))
+    }
+    _ => assert_true(false)
+  }
+}
+
+///|
+test "parse unit pattern match" {
+  let expr = parse("match () with | () -> 1")
+  match expr {
+    MatchExpr(UnitExpr, arms) => {
+      assert_eq(arms.length(), 1)
+      assert_true(arms[0].pattern is UnitPat)
+      assert_true(arms[0].body is IntExpr(1))
     }
     _ => assert_true(false)
   }

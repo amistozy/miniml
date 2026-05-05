@@ -43,6 +43,7 @@ pub(all) enum BinaryOp {
 pub impl Show for BinaryOp
 
 pub(all) enum DeclType {
+  UnitDeclType
   IntDeclType
   BoolDeclType
   StringDeclType
@@ -71,6 +72,7 @@ pub(all) struct Env {
 }
 
 pub(all) enum Expr {
+  UnitExpr
   IntExpr(Int)
   BoolExpr(Bool)
   StringExpr(String)
@@ -110,6 +112,7 @@ pub(all) enum Pattern {
   WildcardPat
   IntPat(Int)
   BoolPat(Bool)
+  UnitPat
   VarPat(String)
   CtorPat(String, Array[Pattern])
   TuplePat(Array[Pattern])
@@ -177,6 +180,7 @@ pub(all) enum Token {
 pub impl Show for Token
 
 pub(all) enum Type {
+  UnitType
   IntType
   BoolType
   StringType
@@ -194,6 +198,7 @@ pub(all) struct TypeEnv {
 }
 
 pub(all) enum Value {
+  UnitValue
   IntValue(Int)
   BoolValue(Bool)
   StringValue(String)

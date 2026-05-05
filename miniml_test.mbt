@@ -5,6 +5,11 @@ test "tuple destructuring evaluates" {
 }
 
 ///|
+test "unit literal evaluates" {
+  assert_eq(@miniml.interpret("()"), "()")
+}
+
+///|
 test "list pattern match evaluates" {
   let code =
     #| let xs = [1, 2, 3] in
@@ -43,6 +48,11 @@ test "infer polymorphic identity" {
 }
 
 ///|
+test "unit literal infers unit type" {
+  assert_eq(@miniml.infer("()"), "unit")
+}
+
+///|
 test "string literal evaluates and prints escaped" {
   let code = "\"hi\\nmini\""
   assert_eq(@miniml.interpret(code), "\"hi\\nmini\"")
@@ -60,6 +70,12 @@ test "match guard evaluates" {
     #| | x :: _ if x == 0 -> 0
     #| | x :: _ if x == 1 -> 42
     #| | _ -> 7
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "unit pattern match evaluates" {
+  let code = "match () with | () -> 42"
   assert_eq(@miniml.interpret(code), "42")
 }
 
@@ -256,6 +272,12 @@ test "annotation mismatch is rejected" {
 }
 
 ///|
+test "unit annotation evaluates" {
+  let code = "let done : unit = () in done"
+  assert_eq(@miniml.interpret(code), "()")
+}
+
+///|
 test "string annotation evaluates" {
   let code = "let greet : string = \"hello\" in greet"
   assert_eq(@miniml.interpret(code), "\"hello\"")
@@ -293,6 +315,12 @@ test "expression ascription inferred type is preserved" {
 ///|
 test "string equality works" {
   let code = "if \"mini\" == \"mini\" then 42 else 0"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "unit equality works" {
+  let code = "if () == () then 42 else 0"
   assert_eq(@miniml.interpret(code), "42")
 }
 
@@ -393,6 +421,12 @@ test "let rec supports pattern parameter" {
 test "let rec pattern parameter infers from tuple argument" {
   let code = "let rec fst_pair (x, _) = x in fst_pair"
   assert_eq(@miniml.infer(code), "('t0 * 't1) -> 't0")
+}
+
+///|
+test "fun unit parameter infers unit domain" {
+  let code = "fun () -> 42"
+  assert_eq(@miniml.infer(code), "unit -> int")
 }
 
 ///|

@@ -149,6 +149,7 @@ pub(all) enum Pattern {
   WildcardPat
   IntPat(Int)
   BoolPat(Bool)
+  UnitPat
   VarPat(String)
   CtorPat(String, Array[Pattern])
   TuplePat(Array[Pattern])
@@ -170,6 +171,7 @@ pub(all) struct MatchArm {
 
 ///|
 pub(all) enum DeclType {
+  UnitDeclType
   IntDeclType
   BoolDeclType
   StringDeclType
@@ -212,6 +214,7 @@ pub(all) struct LetBinding {
 
 ///|
 pub(all) enum Expr {
+  UnitExpr
   IntExpr(Int)
   BoolExpr(Bool)
   StringExpr(String)
@@ -247,6 +250,7 @@ pub(all) struct Env {
 
 ///|
 pub(all) enum Value {
+  UnitValue
   IntValue(Int)
   BoolValue(Bool)
   StringValue(String)
@@ -265,6 +269,7 @@ pub impl Show for Value with output(self, logger) {
 
 ///|
 pub(all) enum Type {
+  UnitType
   IntType
   BoolType
   StringType
@@ -332,6 +337,7 @@ fn let_binding_to_string(binding : LetBinding) -> String {
 
 ///|
 priv enum MatchMatrixKind {
+  UnitKind
   BoolKind
   OptionKind
   EnumKind(Int)
@@ -365,6 +371,7 @@ fn escape_string_literal(text : String) -> String {
 ///|
 fn expr_to_string(expr : Expr) -> String {
   match expr {
+    UnitExpr => "()"
     IntExpr(n) => n.to_string()
     BoolExpr(b) => b.to_string()
     StringExpr(text) => escape_string_literal(text)
@@ -437,6 +444,7 @@ fn expr_to_string(expr : Expr) -> String {
 ///|
 fn decl_type_to_string(type_ : DeclType) -> String {
   match type_ {
+    UnitDeclType => "unit"
     IntDeclType => "int"
     BoolDeclType => "bool"
     StringDeclType => "string"
@@ -564,6 +572,7 @@ fn pattern_to_string(pattern : Pattern) -> String {
     WildcardPat => "_"
     IntPat(n) => n.to_string()
     BoolPat(b) => b.to_string()
+    UnitPat => "()"
     VarPat(name) => name
     CtorPat(name, patterns) => ctor_pattern_to_string(name, patterns)
     TuplePat(patterns) => {
@@ -582,6 +591,7 @@ fn pattern_hint_string(pattern : Pattern) -> String {
     WildcardPat => "_"
     IntPat(n) => n.to_string()
     BoolPat(b) => b.to_string()
+    UnitPat => "()"
     VarPat(name) => name
     CtorPat(name, patterns) => ctor_pattern_hint_string(name, patterns)
     TuplePat(patterns) => {
@@ -694,6 +704,7 @@ fn list_value_to_string(value : Value) -> String {
 ///|
 fn value_to_string(value : Value) -> String {
   match value {
+    UnitValue => "()"
     IntValue(n) => n.to_string()
     BoolValue(b) => b.to_string()
     StringValue(text) => escape_string_literal(text)
@@ -1168,8 +1179,7 @@ fn parse_pattern_atom(
       }
     LParenTok =>
       match rest {
-        [RParenTok, ..] =>
-          raise ParseError("empty tuple pattern is not supported")
+        [RParenTok, .. rest2] => (UnitPat, rest2)
         _ => {
           let (first, rest2) = parse_pattern(rest)
           match rest2 {
@@ -1294,8 +1304,7 @@ fn parse_atom(
       }
     LParenTok =>
       match rest {
-        [RParenTok, ..] =>
-          raise ParseError("empty tuple literal is not supported")
+        [RParenTok, .. rest2] => (UnitExpr, rest2)
         _ => {
           let (first, rest2) = parse_expr(rest)
           match rest2 {
@@ -1543,6 +1552,7 @@ fn parse_decl_type_atom(
     raise ParseError("expected type, but reached end of input")
   }
   match tok {
+    IdentTok("unit") => (UnitDeclType, rest)
     IdentTok("int") => (IntDeclType, rest)
     IdentTok("bool") => (BoolDeclType, rest)
     IdentTok("string") => (StringDeclType, rest)
@@ -1574,7 +1584,7 @@ fn parse_decl_type_atom(
       }
     LParenTok =>
       match rest {
-        [RParenTok, ..] => raise ParseError("empty tuple type is not supported")
+        [RParenTok, .. rest2] => (UnitDeclType, rest2)
         _ => {
           let (first, rest2) = parse_decl_type(rest)
           match rest2 {
@@ -1984,6 +1994,7 @@ pub fn parse(code : String) -> Expr raise MiniMLError {
 ///|
 fn value_eq(lhs : Value, rhs : Value) -> Bool raise MiniMLError {
   match (lhs, rhs) {
+    (UnitValue, UnitValue) => true
     (IntValue(a), IntValue(b)) => a == b
     (BoolValue(a), BoolValue(b)) => a == b
     (StringValue(a), StringValue(b)) => a == b
@@ -2027,6 +2038,7 @@ fn resolve_decl_type(
   ctx : InferCtx,
 ) -> Type {
   match type_ {
+    UnitDeclType => UnitType
     IntDeclType => IntType
     BoolDeclType => BoolType
     StringDeclType => StringType
@@ -2072,6 +2084,7 @@ fn resolve_annotation_type(
   ctx : InferCtx,
 ) -> Type raise MiniMLError {
   match type_ {
+    UnitDeclType => UnitType
     IntDeclType => IntType
     BoolDeclType => BoolType
     StringDeclType => StringType
@@ -2133,6 +2146,11 @@ fn list_from_values(values : Array[Value]) -> Value {
 fn match_pattern(pattern : Pattern, value : Value, env : Env) -> Env? {
   match pattern {
     WildcardPat => Some(env)
+    UnitPat =>
+      match value {
+        UnitValue => Some(env)
+        _ => None
+      }
     IntPat(n) =>
       match value {
         IntValue(m) if n == m => Some(env)
@@ -2287,6 +2305,7 @@ fn eval_binary(
 ///|
 fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
   match expr {
+    UnitExpr => UnitValue
     IntExpr(n) => IntValue(n)
     BoolExpr(b) => BoolValue(b)
     StringExpr(text) => StringValue(text)
@@ -2424,6 +2443,7 @@ fn type_var_name(printer : TypePrinter, id : Int) -> String {
 ///|
 fn type_to_string_with(type_ : Type, printer : TypePrinter) -> String {
   match type_ {
+    UnitType => "unit"
     IntType => "int"
     BoolType => "bool"
     StringType => "string"
@@ -2490,7 +2510,6 @@ fn prune_type(type_ : Type, ctx : InferCtx) -> Type {
         None => VarType(id)
       }
     FunType(arg, ret) => FunType(prune_type(arg, ctx), prune_type(ret, ctx))
-    StringType => StringType
     OptionType(elem) => OptionType(prune_type(elem, ctx))
     NamedType(name, id, args) =>
       NamedType(name, id, args.map(t => prune_type(t, ctx)))
@@ -2504,6 +2523,7 @@ fn prune_type(type_ : Type, ctx : InferCtx) -> Type {
 fn occurs_in(var_id : Int, type_ : Type, ctx : InferCtx) -> Bool {
   match prune_type(type_, ctx) {
     VarType(id) => id == var_id
+    UnitType => false
     StringType => false
     FunType(arg, ret) =>
       occurs_in(var_id, arg, ctx) || occurs_in(var_id, ret, ctx)
@@ -2553,6 +2573,7 @@ fn unify(
   match (lhs, rhs) {
     (VarType(a), t) => bind_type_var(a, t, ctx)
     (t, VarType(b)) => bind_type_var(b, t, ctx)
+    (UnitType, UnitType) => ()
     (IntType, IntType) => ()
     (BoolType, BoolType) => ()
     (StringType, StringType) => ()
@@ -2610,7 +2631,7 @@ fn diff_vars(lhs : Array[Int], rhs : Array[Int]) -> Array[Int] {
 ///|
 fn ftv_type(type_ : Type, ctx : InferCtx) -> Array[Int] {
   match prune_type(type_, ctx) {
-    IntType | BoolType | StringType => []
+    UnitType | IntType | BoolType | StringType => []
     VarType(id) => [id]
     FunType(arg, ret) => {
       let vars = ftv_type(arg, ctx)
@@ -2663,6 +2684,7 @@ fn instantiate_type(
   ctx : InferCtx,
 ) -> Type {
   match prune_type(type_, ctx) {
+    UnitType => UnitType
     IntType => IntType
     BoolType => BoolType
     StringType => StringType
@@ -2760,6 +2782,10 @@ fn infer_pattern(
 ) -> TypeEnv raise MiniMLError {
   match pattern {
     WildcardPat => env
+    UnitPat => {
+      unify(expected, UnitType, ctx)
+      env
+    }
     IntPat(_) => {
       unify(expected, IntType, ctx)
       env
@@ -2870,7 +2896,7 @@ fn bind_generalized_pattern(
   ctx : InferCtx,
 ) -> TypeEnv {
   match pattern {
-    WildcardPat | IntPat(_) | BoolPat(_) | NilPat => env
+    WildcardPat | UnitPat | IntPat(_) | BoolPat(_) | NilPat => env
     VarPat(name) => env.extend(name, generalize(base_env, expected, ctx))
     CtorPat(name, patterns) =>
       match ctx.ctor_to_enum.get(name) {
@@ -2970,6 +2996,7 @@ fn wildcard_patterns(count : Int) -> Array[Pattern] {
 ///|
 fn match_matrix_kind(ty : Type, ctx : InferCtx) -> MatchMatrixKind {
   match prune_type(ty, ctx) {
+    UnitType => UnitKind
     BoolType => BoolKind
     OptionType(_) => OptionKind
     NamedType(_, id, _) =>
@@ -3007,6 +3034,21 @@ fn specialize_bool_rows(
     } else {
       match head {
         BoolPat(value) if value == target => Some(tail.to_owned())
+        _ => None
+      }
+    }
+  })
+}
+
+///|
+fn specialize_unit_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
+  rows.filter_map(row => {
+    guard row is [head, .. tail] else { None }
+    if pattern_is_wild(head) {
+      Some(tail.to_owned())
+    } else {
+      match head {
+        UnitPat => Some(tail.to_owned())
         _ => None
       }
     }
@@ -3156,6 +3198,7 @@ fn patterns_cover_vector(
       let defaults = default_rows(rows)
       defaults.length() > 0 && patterns_cover_vector(defaults, tail_tys, ctx)
     }
+    UnitKind => patterns_cover_vector(specialize_unit_rows(rows), tail_tys, ctx)
     BoolKind =>
       patterns_cover_vector(specialize_bool_rows(rows, true), tail_tys, ctx) &&
       patterns_cover_vector(specialize_bool_rows(rows, false), tail_tys, ctx)
@@ -3260,6 +3303,8 @@ fn useful_vector(
       match match_matrix_kind(head_ty, ctx) {
         UniversalKind =>
           useful_vector(default_rows(rows), tail_vec, tail_tys, ctx)
+        UnitKind =>
+          useful_vector(specialize_unit_rows(rows), tail_vec, tail_tys, ctx)
         BoolKind =>
           useful_vector(
             specialize_bool_rows(rows, true),
@@ -3350,6 +3395,8 @@ fn useful_vector(
             _ => false
           }
       }
+    UnitPat =>
+      useful_vector(specialize_unit_rows(rows), tail_vec, tail_tys, ctx)
     IntPat(n) =>
       useful_vector(specialize_int_rows(rows, n), tail_vec, tail_tys, ctx)
     BoolPat(b) =>
@@ -3464,6 +3511,17 @@ fn find_missing_vector(
       let missing = find_missing_vector(default_rows(rows), tail_tys, ctx)
       match missing {
         Some(rest) => Some([WildcardPat, ..rest])
+        None => None
+      }
+    }
+    UnitKind => {
+      let missing = find_missing_vector(
+        specialize_unit_rows(rows),
+        tail_tys,
+        ctx,
+      )
+      match missing {
+        Some(rest) => Some([UnitPat, ..rest])
         None => None
       }
     }
@@ -3773,6 +3831,7 @@ fn infer_expr(
   ctx : InferCtx,
 ) -> Type raise MiniMLError {
   match expr {
+    UnitExpr => UnitType
     IntExpr(_) => IntType
     BoolExpr(_) => BoolType
     StringExpr(_) => StringType

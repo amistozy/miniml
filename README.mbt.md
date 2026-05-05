@@ -16,7 +16,7 @@ It includes:
 
 The current language supports:
 
-- integers, booleans, and strings
+- integers, booleans, strings, and unit
 - variables, `if`, `fun`, application
 - `let` and `let rec`
 - tuples and lists
@@ -55,6 +55,14 @@ Strings:
 ```ml
 let greet : string = "hello" in
 if greet == "hello" then greet else "bye"
+```
+
+Unit:
+
+```ml
+let ping : unit = () in
+match ping with
+| () -> 42
 ```
 
 Match guards:
