@@ -28,6 +28,7 @@ The current implementation supports:
 - `let` and `let rec`
 - tuple and list literals
 - block expressions: `{ ... }`
+- block-local `let` and `let rec` declarations
 - tuple, list, constructor, wildcard, and unit patterns
 - match guards: `| pat if cond -> expr`
 - sequencing: `expr1; expr2`
@@ -78,8 +79,8 @@ Blocks:
 
 ```ml
 {
-  ();
-  "done"
+  let x = 41;
+  x + 1
 }
 ```
 

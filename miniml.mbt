@@ -1383,8 +1383,108 @@ fn parse_atom(
 fn parse_block_expr(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
+  parse_block_items(tokens)
+}
+
+///|
+fn block_nonrec_expr(bindings : Array[LetBinding], body : Expr) -> Expr {
+  if bindings.length() == 1 {
+    let binding = bindings[0]
+    LetExpr(binding.pattern, binding.annot, binding.bound, body)
+  } else {
+    LetGroupExpr(bindings, body)
+  }
+}
+
+///|
+fn block_rec_expr(bindings : Array[RecBinding], body : Expr) -> Expr {
+  if bindings.length() == 1 {
+    let binding = bindings[0]
+    LetRecExpr(
+      binding.name,
+      binding.param,
+      binding.param_annot,
+      binding.return_annot,
+      binding.fun_body,
+      body,
+    )
+  } else {
+    LetRecGroupExpr(bindings, body)
+  }
+}
+
+///|
+fn parse_block_items(
+  tokens : ArrayView[Token],
+) -> (Expr, ArrayView[Token]) raise MiniMLError {
   match tokens {
     [RBraceTok, .. rest] => (UnitExpr, rest)
+    [LetTok, .. rest] =>
+      match rest {
+        [RecTok, .. rest2] => {
+          let (name, rest3) = expect_ident(rest2)
+          let (first_binding, rest4) = parse_block_rec_binding(name, rest3)
+          let bindings = [first_binding]
+          let mut current = rest4
+          while true {
+            match current {
+              [AndKwTok, .. rest5] => {
+                let (next_name, rest6) = expect_ident(rest5)
+                let (binding, rest7) = parse_block_rec_binding(next_name, rest6)
+                bindings.push(binding)
+                current = rest7
+              }
+              _ => break
+            }
+          }
+          match current {
+            [SemiTok, .. rest5] => {
+              let (body, rest6) = parse_block_items(rest5)
+              (block_rec_expr(bindings, body), rest6)
+            }
+            [RBraceTok, .. rest5] => (block_rec_expr(bindings, UnitExpr), rest5)
+            [tok, ..] =>
+              raise ParseError(
+                "expected `;` or `}` after block let rec, got \{token_to_string(tok)}",
+              )
+            [] => raise ParseError("expected `}` to close block expression")
+          }
+        }
+        _ => {
+          let (pattern, rest3) = parse_pattern(rest)
+          let (first_binding, rest4) = parse_block_nonrec_binding(
+            pattern, rest3,
+          )
+          let bindings = [first_binding]
+          let mut current = rest4
+          while true {
+            match current {
+              [AndKwTok, .. rest5] => {
+                let (next_pattern, rest6) = parse_pattern(rest5)
+                let (binding, rest7) = parse_block_nonrec_binding(
+                  next_pattern, rest6,
+                )
+                bindings.push(binding)
+                current = rest7
+              }
+              _ => break
+            }
+          }
+          match current {
+            [SemiTok, .. rest5] => {
+              let (body, rest6) = parse_block_items(rest5)
+              (block_nonrec_expr(bindings, body), rest6)
+            }
+            [RBraceTok, .. rest5] =>
+              (block_nonrec_expr(bindings, UnitExpr), rest5)
+            [tok, ..] =>
+              raise ParseError(
+                "expected `;` or `}` after block let, got \{token_to_string(tok)}",
+              )
+            [] => raise ParseError("expected `}` to close block expression")
+          }
+        }
+      }
     _ => {
       let exprs = []
       let (first, rest0) = parse_expr_no_seq(tokens)
@@ -1396,6 +1496,10 @@ fn parse_block_expr(
           [SemiTok, RBraceTok, .. rest] => {
             trailing_unit = true
             return (seq_from_exprs(exprs, trailing_unit~), rest)
+          }
+          [SemiTok, LetTok, ..] => {
+            let (body, rest2) = parse_block_items(current[1:])
+            return (SeqExpr(seq_from_exprs(exprs), body), rest2)
           }
           [SemiTok, .. rest] => {
             let (next_expr, rest2) = parse_expr_no_seq(rest)
@@ -1592,6 +1696,24 @@ fn parse_match_arm(
 }
 
 ///|
+fn parse_match_arm_no_seq(
+  tokens : ArrayView[Token],
+) -> (MatchArm, ArrayView[Token]) raise MiniMLError {
+  let tokens = if tokens is [BarTok, .. rest] { rest } else { tokens }
+  let (pattern, rest0) = parse_pattern(tokens)
+  let (guard_, rest) = match rest0 {
+    [IfTok, .. rest2] => {
+      let (guard_expr, rest3) = parse_expr_no_seq(rest2)
+      (Some(guard_expr), rest3)
+    }
+    _ => (None, rest0)
+  }
+  let rest1 = expect_token(rest, ArrowTok)
+  let (body, rest2) = parse_expr_no_seq(rest1)
+  (MatchArm::{ pattern, guard_, body }, rest2)
+}
+
+///|
 fn parse_match(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
@@ -1610,6 +1732,33 @@ fn parse_match(
     match current {
       [BarTok, ..] => {
         let (arm, rest5) = parse_match_arm(current)
+        arms.push(arm)
+        continue rest5
+      }
+      _ => break (MatchExpr(scrutinee, arms), current)
+    }
+  }
+}
+
+///|
+fn parse_match_no_seq(
+  tokens : ArrayView[Token],
+) -> (Expr, ArrayView[Token]) raise MiniMLError {
+  guard tokens is [tok, .. rest] else {
+    raise ParseError("expected expression, but reached end of input")
+  }
+  if tok != MatchTok {
+    return parse_or(tokens)
+  }
+  let (scrutinee, rest2) = parse_expr_no_seq(rest)
+  let rest3 = expect_token(rest2, WithTok)
+  let arms = []
+  let (first_arm, rest4) = parse_match_arm_no_seq(rest3)
+  arms.push(first_arm)
+  for current = rest4 {
+    match current {
+      [BarTok, ..] => {
+        let (arm, rest5) = parse_match_arm_no_seq(current)
         arms.push(arm)
         continue rest5
       }
@@ -1811,6 +1960,18 @@ fn parse_rec_binding(
 }
 
 ///|
+fn parse_block_rec_binding(
+  name : String,
+  tokens : ArrayView[Token],
+) -> (RecBinding, ArrayView[Token]) raise MiniMLError {
+  let (params, rest0) = parse_param_list(tokens)
+  let (return_annot, rest1) = parse_type_annotation(rest0)
+  let rest2 = expect_token(rest1, EqTok)
+  let (fun_body0, rest3) = parse_expr_no_seq(rest2)
+  (make_rec_binding(name, params, return_annot, fun_body0), rest3)
+}
+
+///|
 fn parse_nonrec_binding(
   pattern : Pattern,
   tokens : ArrayView[Token],
@@ -1831,6 +1992,32 @@ fn parse_nonrec_binding(
       let (annot, rest0) = parse_type_annotation(tokens)
       let rest1 = expect_token(rest0, EqTok)
       let (bound, rest2) = parse_expr(rest1)
+      (LetBinding::{ pattern, annot, bound }, rest2)
+    }
+  }
+}
+
+///|
+fn parse_block_nonrec_binding(
+  pattern : Pattern,
+  tokens : ArrayView[Token],
+) -> (LetBinding, ArrayView[Token]) raise MiniMLError {
+  match (pattern, tokens) {
+    (VarPat(name), [tok, ..]) if is_param_start(tok) => {
+      let (params, rest0) = parse_param_list(tokens)
+      let (return_annot, rest1) = parse_type_annotation(rest0)
+      let rest2 = expect_token(rest1, EqTok)
+      let (fun_body0, rest3) = parse_expr_no_seq(rest2)
+      let bound = params_to_expr(
+        params,
+        ascribe_if_needed(fun_body0, return_annot),
+      )
+      (LetBinding::{ pattern: VarPat(name), annot: None, bound }, rest3)
+    }
+    _ => {
+      let (annot, rest0) = parse_type_annotation(tokens)
+      let rest1 = expect_token(rest0, EqTok)
+      let (bound, rest2) = parse_expr_no_seq(rest1)
       (LetBinding::{ pattern, annot, bound }, rest2)
     }
   }
@@ -1945,6 +2132,22 @@ fn parse_fun(
 }
 
 ///|
+fn parse_fun_no_seq(
+  tokens : ArrayView[Token],
+) -> (Expr, ArrayView[Token]) raise MiniMLError {
+  guard tokens is [tok, .. rest] else {
+    raise ParseError("expected expression, but reached end of input")
+  }
+  if tok != FunTok {
+    return parse_match_no_seq(tokens)
+  }
+  let (params, rest2) = parse_param_list(rest)
+  let rest3 = expect_token(rest2, ArrowTok)
+  let (body, rest4) = parse_expr_no_seq(rest3)
+  (params_to_expr(params, body), rest4)
+}
+
+///|
 fn parse_if(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
@@ -1959,6 +2162,24 @@ fn parse_if(
   let (then_, rest4) = parse_expr(rest3)
   let rest5 = expect_token(rest4, ElseTok)
   let (else_, rest6) = parse_expr(rest5)
+  (IfExpr(cond, then_, else_), rest6)
+}
+
+///|
+fn parse_if_no_seq(
+  tokens : ArrayView[Token],
+) -> (Expr, ArrayView[Token]) raise MiniMLError {
+  guard tokens is [tok, .. rest] else {
+    raise ParseError("expected expression, but reached end of input")
+  }
+  if tok != IfTok {
+    return parse_fun_no_seq(tokens)
+  }
+  let (cond, rest2) = parse_expr_no_seq(rest)
+  let rest3 = expect_token(rest2, ThenTok)
+  let (then_, rest4) = parse_expr_no_seq(rest3)
+  let rest5 = expect_token(rest4, ElseTok)
+  let (else_, rest6) = parse_expr_no_seq(rest5)
   (IfExpr(cond, then_, else_), rest6)
 }
 
@@ -2038,10 +2259,117 @@ fn parse_let(
 }
 
 ///|
+fn parse_let_no_seq(
+  tokens : ArrayView[Token],
+) -> (Expr, ArrayView[Token]) raise MiniMLError {
+  guard tokens is [tok, .. rest] else {
+    raise ParseError("expected expression, but reached end of input")
+  }
+  if tok != LetTok {
+    return parse_if_no_seq(tokens)
+  }
+  guard rest is [tok2, .. rest2] else {
+    raise ParseError("incomplete let expression")
+  }
+  if tok2 == RecTok {
+    let (name, rest3) = expect_ident(rest2)
+    let (first_binding, rest4) = parse_rec_binding(name, rest3)
+    let bindings = [first_binding]
+    let mut current = rest4
+    while true {
+      match current {
+        [AndKwTok, .. rest5] => {
+          let (next_name, rest6) = expect_ident(rest5)
+          let (binding, rest7) = parse_rec_binding(next_name, rest6)
+          bindings.push(binding)
+          current = rest7
+        }
+        _ => break
+      }
+    }
+    let rest8 = expect_token(current, InTok)
+    let (body, rest9) = parse_expr_no_seq(rest8)
+    if bindings.length() == 1 {
+      let binding = bindings[0]
+      (
+        LetRecExpr(
+          binding.name,
+          binding.param,
+          binding.param_annot,
+          binding.return_annot,
+          binding.fun_body,
+          body,
+        ),
+        rest9,
+      )
+    } else {
+      (LetRecGroupExpr(bindings, body), rest9)
+    }
+  } else {
+    let (pattern, rest3) = parse_pattern(rest)
+    let (first_binding, rest4) = parse_nonrec_binding(pattern, rest3)
+    let bindings = []
+    bindings.push(first_binding)
+    let mut current = rest4
+    while true {
+      match current {
+        [AndKwTok, .. rest5] => {
+          let (next_pattern, rest6) = parse_pattern(rest5)
+          let (binding, rest7) = parse_nonrec_binding(next_pattern, rest6)
+          bindings.push(binding)
+          current = rest7
+        }
+        _ => break
+      }
+    }
+    let rest5 = expect_token(current, InTok)
+    let (body, rest6) = parse_expr_no_seq(rest5)
+    if bindings.length() == 1 {
+      let binding = bindings[0]
+      (LetExpr(binding.pattern, binding.annot, binding.bound, body), rest6)
+    } else {
+      (LetGroupExpr(bindings, body), rest6)
+    }
+  }
+}
+
+///|
+fn parse_enum_no_seq(
+  tokens : ArrayView[Token],
+) -> (Expr, ArrayView[Token]) raise MiniMLError {
+  guard tokens is [tok, .. rest] else {
+    raise ParseError("expected expression, but reached end of input")
+  }
+  if tok != EnumTok {
+    return parse_let_no_seq(tokens)
+  }
+  let (name, rest2) = expect_ctor_name(rest)
+  let (type_params, rest3) = parse_enum_type_params(rest2)
+  let rest4 = expect_token(rest3, EqTok)
+  let variants = []
+  let (first_variant, rest5) = parse_enum_variant_decl(rest4)
+  variants.push(first_variant)
+  for current = rest5 {
+    match current {
+      [BarTok, .. rest6] => {
+        let (variant, rest7) = parse_enum_variant_decl(rest6)
+        variants.push(variant)
+        continue rest7
+      }
+      _ => {
+        let rest6 = expect_token(current, InTok)
+        let (body, rest7) = parse_expr_no_seq(rest6)
+        break (EnumExpr(EnumDecl::{ name, type_params, variants }, body), rest7)
+      }
+    }
+  }
+}
+
+///|
 fn parse_expr_no_seq(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
-  let (expr0, rest0) = parse_enum(tokens)
+  let (expr0, rest0) = parse_enum_no_seq(tokens)
   for expr = expr0, rest = rest0 {
     match rest {
       [ColonTok, .. rest2] => {
@@ -2057,7 +2385,16 @@ fn parse_expr_no_seq(
 fn parse_expr(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
-  let (expr1, rest1) = parse_expr_no_seq(tokens)
+  let (expr0, rest0) = parse_enum(tokens)
+  let (expr1, rest1) = for expr = expr0, rest = rest0 {
+    match rest {
+      [ColonTok, .. rest2] => {
+        let (type_, rest3) = parse_decl_type(rest2)
+        continue AscribeExpr(expr, type_), rest3
+      }
+      _ => break (expr, rest)
+    }
+  }
   match rest1 {
     [SemiTok, .. rest2] => {
       let (rhs, rest3) = parse_expr(rest2)

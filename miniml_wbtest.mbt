@@ -121,6 +121,28 @@ test "parse block expression as sequence" {
 }
 
 ///|
+test "parse block let desugars to let expression" {
+  let expr = parse("{ let x = 1; x }")
+  assert_true(expr is LetExpr(VarPat("x"), None, IntExpr(1), VarExpr("x")))
+}
+
+///|
+test "parse block let rec desugars to let rec expression" {
+  let expr = parse("{ let rec loop () = 42; loop }")
+  match expr {
+    LetRecExpr(
+      "loop",
+      param,
+      None,
+      None,
+      LetExpr(UnitPat, None, VarExpr(arg), IntExpr(42)),
+      VarExpr("loop")
+    ) => assert_eq(param, arg)
+    _ => assert_true(false)
+  }
+}
+
+///|
 test "parse unit annotation" {
   let expr = parse("let x : unit = () in x")
   assert_true(
@@ -138,6 +160,15 @@ test "sequence is right associative" {
 test "parse block expression allows trailing semicolon" {
   let expr = parse("{ (); }")
   assert_true(expr is SeqExpr(UnitExpr, UnitExpr))
+}
+
+///|
+test "parse block expression can mix expr then let" {
+  let expr = parse("{ (); let x = 1; x }")
+  assert_true(
+    expr
+    is SeqExpr(UnitExpr, LetExpr(VarPat("x"), None, IntExpr(1), VarExpr("x"))),
+  )
 }
 
 ///|

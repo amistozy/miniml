@@ -84,6 +84,34 @@ test "block expression infers final type" {
 }
 
 ///|
+test "block let introduces local scope" {
+  assert_eq(@miniml.interpret("{ let x = 40; x + 2 }"), "42")
+}
+
+///|
+test "block let rec supports local recursion" {
+  let code =
+    #| {
+    #|   let rec fact n =
+    #|     if n == 0 then 1 else n * fact (n - 1);
+    #|   fact 5
+    #| }
+  assert_eq(@miniml.interpret(code), "120")
+}
+
+///|
+test "block can mix expression then let" {
+  let code = "{ (); let x = 41; x + 1 }"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "block let can end with declaration and produce unit" {
+  let code = "{ let x = 1 }"
+  assert_eq(@miniml.interpret(code), "()")
+}
+
+///|
 test "string literal evaluates and prints escaped" {
   let code = "\"hi\\nmini\""
   assert_eq(@miniml.interpret(code), "\"hi\\nmini\"")
