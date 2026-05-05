@@ -50,6 +50,7 @@ pub(all) enum DeclType {
   TupleDeclType(Array[DeclType])
   ListDeclType(DeclType)
   OptionDeclType(DeclType)
+  FunDeclType(DeclType, DeclType)
 }
 
 pub(all) struct EnumDecl {
@@ -77,6 +78,7 @@ pub(all) enum Expr {
   LetExpr(Pattern, DeclType?, Expr, Expr)
   LetRecExpr(String, String, DeclType?, DeclType?, Expr, Expr)
   FunExpr(String, DeclType?, Expr)
+  AscribeExpr(Expr, DeclType)
   ApplyExpr(Expr, Expr)
   BinaryExpr(BinaryOp, Expr, Expr)
   NegExpr(Expr)

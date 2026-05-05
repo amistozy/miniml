@@ -173,6 +173,7 @@ pub(all) enum DeclType {
   TupleDeclType(Array[DeclType])
   ListDeclType(DeclType)
   OptionDeclType(DeclType)
+  FunDeclType(DeclType, DeclType)
 }
 
 ///|
@@ -198,6 +199,7 @@ pub(all) enum Expr {
   LetExpr(Pattern, DeclType?, Expr, Expr)
   LetRecExpr(String, String, DeclType?, DeclType?, Expr, Expr)
   FunExpr(String, DeclType?, Expr)
+  AscribeExpr(Expr, DeclType)
   ApplyExpr(Expr, Expr)
   BinaryExpr(BinaryOp, Expr, Expr)
   NegExpr(Expr)
@@ -313,6 +315,8 @@ fn expr_to_string(expr : Expr) -> String {
     }
     FunExpr(param, annot, body) =>
       "fun \{binder_to_string(param, annot)} -> \{expr_to_string(body)}"
+    AscribeExpr(expr, type_) =>
+      "(\{expr_to_string(expr)} : \{decl_type_to_string(type_)})"
     ApplyExpr(func, arg) => "(\{expr_to_string(func)} \{expr_to_string(arg)})"
     BinaryExpr(op, lhs, rhs) =>
       "(\{expr_to_string(lhs)} \{op.to_string()} \{expr_to_string(rhs)})"
@@ -373,6 +377,13 @@ fn decl_type_to_string(type_ : DeclType) -> String {
         _ => decl_type_to_string(elem)
       }
       "\{elem_s} option"
+    }
+    FunDeclType(arg, ret) => {
+      let arg_s = match arg {
+        FunDeclType(_, _) => "(\{decl_type_to_string(arg)})"
+        _ => decl_type_to_string(arg)
+      }
+      "\{arg_s} -> \{decl_type_to_string(ret)}"
     }
   }
 }
@@ -1505,7 +1516,13 @@ fn parse_decl_type(
       _ => break
     }
   }
-  (result, current)
+  match current {
+    [ArrowTok, .. rest2] => {
+      let (ret, rest3) = parse_decl_type(rest2)
+      (FunDeclType(result, ret), rest3)
+    }
+    _ => (result, current)
+  }
 }
 
 ///|
@@ -1710,7 +1727,20 @@ fn parse_let(
 fn parse_expr(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
-  parse_enum(tokens)
+  let (expr0, rest0) = parse_enum(tokens)
+  let mut expr = expr0
+  let mut rest = rest0
+  while true {
+    match rest {
+      [ColonTok, .. rest2] => {
+        let (type_, rest3) = parse_decl_type(rest2)
+        expr = AscribeExpr(expr, type_)
+        rest = rest3
+      }
+      _ => break
+    }
+  }
+  (expr, rest)
 }
 
 ///|
@@ -1800,6 +1830,11 @@ fn resolve_decl_type(
       ListType(resolve_decl_type(elem, enum_name, enum_id, type_params, ctx))
     OptionDeclType(elem) =>
       OptionType(resolve_decl_type(elem, enum_name, enum_id, type_params, ctx))
+    FunDeclType(arg, ret) =>
+      FunType(
+        resolve_decl_type(arg, enum_name, enum_id, type_params, ctx),
+        resolve_decl_type(ret, enum_name, enum_id, type_params, ctx),
+      )
   }
 }
 
@@ -1827,6 +1862,11 @@ fn resolve_annotation_type(
       TupleType(types.map(type_ => resolve_annotation_type(type_, ctx)))
     ListDeclType(elem) => ListType(resolve_annotation_type(elem, ctx))
     OptionDeclType(elem) => OptionType(resolve_annotation_type(elem, ctx))
+    FunDeclType(arg, ret) =>
+      FunType(
+        resolve_annotation_type(arg, ctx),
+        resolve_annotation_type(ret, ctx),
+      )
   }
 }
 
@@ -2019,6 +2059,7 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
       eval_expr(body, rec_env)
     }
     FunExpr(param, _, body) => ClosureValue(param, body, env)
+    AscribeExpr(expr, _) => eval_expr(expr, env)
     ApplyExpr(func, arg) => {
       let func_value = eval_expr(func, env)
       let arg_value = eval_expr(arg, env)
@@ -3603,6 +3644,12 @@ fn infer_expr(
       let env2 = env.extend(param, Scheme::{ vars: [], ty: arg_type })
       let body_type = infer_expr(body, env2, ctx)
       FunType(prune_type(arg_type, ctx), prune_type(body_type, ctx))
+    }
+    AscribeExpr(expr, annot) => {
+      let expr_type = infer_expr(expr, env, ctx)
+      let expected = resolve_annotation_type(annot, ctx)
+      unify(expr_type, expected, ctx)
+      prune_type(expected, ctx)
     }
     ApplyExpr(func, arg) => {
       let func_type = infer_expr(func, env, ctx)

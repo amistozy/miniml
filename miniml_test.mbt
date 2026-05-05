@@ -255,3 +255,38 @@ test "free type variable annotation is rejected" {
   }
   assert_eq(msg, "type annotation cannot use free type variable `a`")
 }
+
+///|
+test "expression ascription evaluates" {
+  let code = "(Some 42 : int option)"
+  assert_eq(@miniml.interpret(code), "Some(42)")
+}
+
+///|
+test "expression ascription constrains type" {
+  let code = "((fun x -> x) : int -> int) 7"
+  assert_eq(@miniml.interpret(code), "7")
+}
+
+///|
+test "expression ascription inferred type is preserved" {
+  assert_eq(@miniml.infer("(Some 1 : int option)"), "int option")
+}
+
+///|
+test "expression ascription mismatch is rejected" {
+  let msg = try {
+    let _ = @miniml.infer("(1 : bool)")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "cannot unify int with bool")
+}
+
+///|
+test "expression ascription can wrap let expression" {
+  let code = "(let id = fun x -> x in id 1) : int"
+  assert_eq(@miniml.interpret(code), "1")
+}

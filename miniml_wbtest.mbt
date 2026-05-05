@@ -52,6 +52,44 @@ test "parse annotated let rec" {
 }
 
 ///|
+test "parse expression ascription" {
+  let expr = parse("(Some 1) : int option")
+  assert_true(
+    expr
+    is AscribeExpr(
+      ApplyExpr(VarExpr("Some"), IntExpr(1)),
+      OptionDeclType(IntDeclType)
+    ),
+  )
+}
+
+///|
+test "ascription has lower precedence than let" {
+  let expr = parse("let x = 1 in x : int")
+  assert_true(
+    expr
+    is LetExpr(
+      VarPat("x"),
+      None,
+      IntExpr(1),
+      AscribeExpr(VarExpr("x"), IntDeclType)
+    ),
+  )
+}
+
+///|
+test "parenthesized let can be ascribed as a whole" {
+  let expr = parse("(let x = 1 in x) : int")
+  assert_true(
+    expr
+    is AscribeExpr(
+      LetExpr(VarPat("x"), None, IntExpr(1), VarExpr("x")),
+      IntDeclType
+    ),
+  )
+}
+
+///|
 test "parse list pattern match" {
   let expr = parse("match [1] with | x :: xs -> x | [] -> 0")
   match expr {

@@ -26,6 +26,7 @@ The current language supports:
 - parameterized enums: `enum Option[a] = None | Some(a) in ...`
 - direct multi-argument variants: `RGB(1, 2, 3)`
 - optional type annotations on `let`, `let rec`, and `fun`
+- expression-level type ascription: `expr : type`
 
 ## Examples
 
@@ -95,6 +96,12 @@ let rec sum (xs : int list) : int =
   | x :: rest -> x + sum rest
 in
 sum [1, 2, 3]
+```
+
+Expression ascription:
+
+```ml
+((fun x -> x) : int -> int) 7
 ```
 
 ## CLI
