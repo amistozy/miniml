@@ -2491,12 +2491,9 @@ fn unify(
 
 ///|
 fn add_unique(vars : Array[Int], value : Int) -> Unit {
-  for existing in vars {
-    if existing == value {
-      return
-    }
+  if !vars.contains(value) {
+    vars.push(value)
   }
-  vars.push(value)
 }
 
 ///|
@@ -3492,7 +3489,7 @@ fn find_missing_vector(
               )
               match missing_cons {
                 Some(vec) => {
-                  guard vec is [vec0, vec1, ..rest]
+                  guard vec is [vec0, vec1, .. rest]
                   Some([ConsPat(vec0, vec1), ..rest])
                 }
                 None => None
