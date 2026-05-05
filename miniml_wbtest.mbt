@@ -46,6 +46,13 @@ test "tokenize semicolon" {
 }
 
 ///|
+test "tokenize braces" {
+  let tokens = tokenize("{ () }")
+  assert_eq(tokens[0], LBraceTok)
+  assert_eq(tokens[3], RBraceTok)
+}
+
+///|
 test "tokenize let rec and keyword" {
   let tokens = tokenize("let rec even n = odd n and odd n = even n in even 0")
   assert_eq(tokens[0], LetTok)
@@ -102,6 +109,18 @@ test "parse sequence expression" {
 }
 
 ///|
+test "parse empty block expression" {
+  let expr = parse("{}")
+  assert_true(expr is UnitExpr)
+}
+
+///|
+test "parse block expression as sequence" {
+  let expr = parse("{ (); 1 }")
+  assert_true(expr is SeqExpr(UnitExpr, IntExpr(1)))
+}
+
+///|
 test "parse unit annotation" {
   let expr = parse("let x : unit = () in x")
   assert_true(
@@ -113,6 +132,12 @@ test "parse unit annotation" {
 test "sequence is right associative" {
   let expr = parse("(); (); 1")
   assert_true(expr is SeqExpr(UnitExpr, SeqExpr(UnitExpr, IntExpr(1))))
+}
+
+///|
+test "parse block expression allows trailing semicolon" {
+  let expr = parse("{ (); }")
+  assert_true(expr is SeqExpr(UnitExpr, UnitExpr))
 }
 
 ///|

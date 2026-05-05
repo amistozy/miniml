@@ -27,6 +27,7 @@ The current implementation supports:
 - `if ... then ... else ...`
 - `let` and `let rec`
 - tuple and list literals
+- block expressions: `{ ... }`
 - tuple, list, constructor, wildcard, and unit patterns
 - match guards: `| pat if cond -> expr`
 - sequencing: `expr1; expr2`
@@ -71,6 +72,15 @@ Unit and sequencing:
 let ping : unit = () in
 ping;
 "done"
+```
+
+Blocks:
+
+```ml
+{
+  ();
+  "done"
+}
 ```
 
 Pattern matching with a guard:

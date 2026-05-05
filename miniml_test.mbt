@@ -64,6 +64,26 @@ test "sequence infers rhs type" {
 }
 
 ///|
+test "empty block evaluates to unit" {
+  assert_eq(@miniml.interpret("{}"), "()")
+}
+
+///|
+test "block expression evaluates to final value" {
+  assert_eq(@miniml.interpret("{ (); 42 }"), "42")
+}
+
+///|
+test "block expression with trailing semicolon evaluates to unit" {
+  assert_eq(@miniml.interpret("{ (); }"), "()")
+}
+
+///|
+test "block expression infers final type" {
+  assert_eq(@miniml.infer("{ (); \"done\" }"), "string")
+}
+
+///|
 test "string literal evaluates and prints escaped" {
   let code = "\"hi\\nmini\""
   assert_eq(@miniml.interpret(code), "\"hi\\nmini\"")

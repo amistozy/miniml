@@ -35,6 +35,8 @@ pub(all) enum Token {
   ElseTok
   MatchTok
   WithTok
+  LBraceTok
+  RBraceTok
   LParenTok
   RParenTok
   LBracketTok
@@ -82,6 +84,8 @@ pub impl Show for Token with output(self, logger) {
     ElseTok => "else"
     MatchTok => "match"
     WithTok => "with"
+    LBraceTok => "{"
+    RBraceTok => "}"
     LParenTok => "("
     RParenTok => ")"
     LBracketTok => "["
@@ -923,6 +927,14 @@ pub fn tokenize(code : String) -> ArrayView[Token] raise MiniMLError {
         tokens.push(ConsTok)
         continue next
       }
+      ['{', .. next] => {
+        tokens.push(LBraceTok)
+        continue next
+      }
+      ['}', .. next] => {
+        tokens.push(RBraceTok)
+        continue next
+      }
       ['"', .. next] => {
         let (text, rest2) = read_string_body(next)
         tokens.push(StringTok(text))
@@ -1043,6 +1055,7 @@ fn is_atom_start(token : Token) -> Bool {
     | StringTok(_)
     | IdentTok(_)
     | CtorTok(_)
+    | LBraceTok
     | LParenTok
     | LBracketTok => true
     _ => false
@@ -1245,6 +1258,22 @@ fn apply_args(func : Expr, args : ArrayView[Expr]) -> Expr {
 }
 
 ///|
+fn seq_from_exprs(
+  exprs : ArrayView[Expr],
+  trailing_unit? : Bool = false,
+) -> Expr {
+  let body = if trailing_unit { [..exprs, UnitExpr] } else { exprs.to_owned() }
+  if body.is_empty() {
+    return UnitExpr
+  }
+  let mut acc = body[body.length() - 1]
+  for i = body.length() - 2; i >= 0; i = i - 1 {
+    acc = SeqExpr(body[i], acc)
+  }
+  acc
+}
+
+///|
 fn parse_ctor_expr_args(
   name : String,
   tokens : ArrayView[Token],
@@ -1286,6 +1315,7 @@ fn parse_atom(
         [LParenTok, .. rest2] => parse_ctor_expr_args(name, rest2)
         _ => (VarExpr(name), rest)
       }
+    LBraceTok => parse_block_expr(rest)
     LBracketTok =>
       match rest {
         [RBracketTok, .. rest2] => (ListExpr([]), rest2)
@@ -1346,6 +1376,42 @@ fn parse_atom(
         }
       }
     _ => raise ParseError("expected atom, got \{token_to_string(tok)}")
+  }
+}
+
+///|
+fn parse_block_expr(
+  tokens : ArrayView[Token],
+) -> (Expr, ArrayView[Token]) raise MiniMLError {
+  match tokens {
+    [RBraceTok, .. rest] => (UnitExpr, rest)
+    _ => {
+      let exprs = []
+      let (first, rest0) = parse_expr_no_seq(tokens)
+      exprs.push(first)
+      let mut trailing_unit = false
+      let mut current = rest0
+      while true {
+        match current {
+          [SemiTok, RBraceTok, .. rest] => {
+            trailing_unit = true
+            return (seq_from_exprs(exprs, trailing_unit~), rest)
+          }
+          [SemiTok, .. rest] => {
+            let (next_expr, rest2) = parse_expr_no_seq(rest)
+            exprs.push(next_expr)
+            current = rest2
+          }
+          [RBraceTok, .. rest] => return (seq_from_exprs(exprs), rest)
+          [tok, ..] =>
+            raise ParseError(
+              "expected `;` or `}` in block expression, got \{token_to_string(tok)}",
+            )
+          [] => raise ParseError("expected `}` to close block expression")
+        }
+      }
+      (UnitExpr, current)
+    }
   }
 }
 
@@ -1972,11 +2038,11 @@ fn parse_let(
 }
 
 ///|
-fn parse_expr(
+fn parse_expr_no_seq(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
   let (expr0, rest0) = parse_enum(tokens)
-  let (expr1, rest1) = for expr = expr0, rest = rest0 {
+  for expr = expr0, rest = rest0 {
     match rest {
       [ColonTok, .. rest2] => {
         let (type_, rest3) = parse_decl_type(rest2)
@@ -1985,6 +2051,13 @@ fn parse_expr(
       _ => break (expr, rest)
     }
   }
+}
+
+///|
+fn parse_expr(
+  tokens : ArrayView[Token],
+) -> (Expr, ArrayView[Token]) raise MiniMLError {
+  let (expr1, rest1) = parse_expr_no_seq(tokens)
   match rest1 {
     [SemiTok, .. rest2] => {
       let (rhs, rest3) = parse_expr(rest2)

@@ -153,6 +153,8 @@ pub(all) enum Token {
   ElseTok
   MatchTok
   WithTok
+  LBraceTok
+  RBraceTok
   LParenTok
   RParenTok
   LBracketTok
