@@ -1,34 +1,40 @@
-# amistozy/miniml
+# MiniML
 
-`amistozy/miniml` is a small ML-like interpreter written in MoonBit.
-
-It includes:
+MiniML is a small ML-flavored language implementation written in MoonBit.
+It is designed as a compact interpreter and type inference playground rather
+than a production compiler, but it already supports a useful core of
+functional-language features:
 
 - recursive-descent parsing
 - evaluation with lexical closures
 - Hindley-Milner type inference
-- pattern matching with guards
+- algebraic pattern matching
+- guarded match arms
 - exhaustiveness and redundant-arm checking
-- user-defined local enums with nominal typing
-- multi-argument variants and parameterized enums
+- locally scoped nominal enums
+- parameterized and multi-argument variants
 
-## Language Features
+## Overview
 
-The current language supports:
+MiniML evaluates a single expression. The language is expression-oriented, so
+features such as local bindings, recursion, pattern matching, enum declarations,
+and sequencing are all expressed within one expression tree.
 
-- integers, booleans, strings, and unit
-- variables, `if`, `fun`, application
+The current implementation supports:
+
+- primitive values: `int`, `bool`, `string`, and `unit`
+- functions, application, and lexical closures
+- `if ... then ... else ...`
 - `let` and `let rec`
-- tuples and lists
-- pattern matching
+- tuple and list literals
+- tuple, list, constructor, wildcard, and unit patterns
 - match guards: `| pat if cond -> expr`
-- sequencing: `expr1; expr2` with `unit`-typed left-hand side
+- sequencing: `expr1; expr2`
 - local enum declarations: `enum T = ... in expr`
-- parameterized enums: `enum Option[a] = None | Some(a) in ...`
-- direct multi-argument variants: `RGB(1, 2, 3)`
-- optional type annotations on `let`, `let rec`, and `fun`
-- expression-level type ascription: `expr : type`
-- multi-parameter `fun`, `let`, and `let rec` via curried syntax sugar
+- parameterized enums: `enum Option[a] = None | Some(a) in expr`
+- optional type annotations on binders and let-bindings
+- expression type ascription: `expr : type`
+- curried multi-parameter function sugar
 - non-recursive parallel bindings with `let ... and ...`
 - mutually recursive functions with `let rec ... and ...`
 
@@ -37,7 +43,8 @@ The current language supports:
 Identity and polymorphism:
 
 ```ml
-let id = fun x -> x in (id 1, id true)
+let id = fun x -> x in
+(id 1, id true)
 ```
 
 Recursive list processing:
@@ -58,22 +65,15 @@ let greet : string = "hello" in
 if greet == "hello" then greet else "bye"
 ```
 
-Unit:
+Unit and sequencing:
 
 ```ml
 let ping : unit = () in
-match ping with
-| () -> 42
-```
-
-Sequencing:
-
-```ml
-();
+ping;
 "done"
 ```
 
-Match guards:
+Pattern matching with a guard:
 
 ```ml
 match [1, 2] with
@@ -82,7 +82,7 @@ match [1, 2] with
 | _ -> 7
 ```
 
-Local enums:
+Local enum declarations:
 
 ```ml
 enum Traffic = Red | Yellow | Green in
@@ -111,9 +111,9 @@ match Box((1, true)) with
 ```
 
 `Box((x, y))` means a single tuple payload.
-`Box(x, y)` means a variant with two separate fields.
+`Box(x, y)` means a constructor with two separate arguments.
 
-Type annotations:
+Annotated recursion:
 
 ```ml
 let rec sum (xs : int list) : int =
@@ -139,7 +139,7 @@ in
 pow 2 5
 ```
 
-Mutually recursive functions:
+Mutual recursion:
 
 ```ml
 let rec even n =
@@ -192,13 +192,16 @@ moon run cmd/main -- --file path/to/program.mml -t
 
 ## Library API
 
-The package exposes these main entry points:
+The package exposes a small public API:
 
 - `@miniml.tokenize(code)`
 - `@miniml.parse(code)`
 - `@miniml.infer(code)`
 - `@miniml.eval(code)`
 - `@miniml.interpret(code)`
+
+These functions are useful if you want to embed MiniML inside tests, scripts, or
+other MoonBit tools.
 
 ## Development
 
@@ -210,8 +213,19 @@ moon info
 moon fmt
 ```
 
-## Notes
+Recommended local workflow:
+
+1. update code and tests
+2. run `moon test`
+3. run `moon info`
+4. run `moon fmt`
+
+## Current Semantics and Limitations
 
 - Enum types are nominal, not structural.
-- Two enums with the same name in different scopes are treated as distinct types.
-- Exhaustiveness checking ignores guarded arms when computing coverage.
+- Two enums with the same name in different scopes are treated as distinct
+  types.
+- Guarded match arms do not contribute to exhaustiveness coverage.
+- Sequencing requires the left-hand side to have type `unit`.
+- MiniML currently evaluates one expression at a time rather than a full module
+  system or statement-oriented program.
