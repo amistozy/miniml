@@ -31,6 +31,7 @@ The current implementation supports:
 - block-local `let` and `let rec` declarations
 - block-local `enum` declarations
 - tuple, list, constructor, wildcard, and unit patterns
+- or-patterns in match arms: `| p1 | p2 -> expr`
 - match guards: `| pat if cond -> expr`
 - sequencing: `expr1; expr2`
 - local enum declarations: `enum T = ... in expr`
@@ -102,6 +103,14 @@ match [1, 2] with
 | x :: _ if x == 0 -> 0
 | x :: _ if x == 1 -> 42
 | _ -> 7
+```
+
+Or-patterns:
+
+```ml
+match [1] with
+| [] | [_] -> 42
+| _ -> 0
 ```
 
 Local enum declarations:

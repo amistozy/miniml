@@ -465,6 +465,34 @@ test "parse char pattern match" {
 }
 
 ///|
+test "parse match or-pattern expands into multiple arms" {
+  let expr = parse("match xs with | [] | [_] -> 1 | _ -> 0")
+  match expr {
+    MatchExpr(VarExpr("xs"), arms) => {
+      assert_eq(arms.length(), 3)
+      assert_true(arms[0].pattern is NilPat)
+      assert_true(arms[1].pattern is ConsPat(_, NilPat))
+      assert_true(arms[2].pattern is WildcardPat)
+      assert_eq(expr_to_string(arms[0].body), "1")
+      assert_eq(expr_to_string(arms[1].body), "1")
+    }
+    _ => assert_true(false)
+  }
+}
+
+///|
+test "or-pattern requires consistent binders" {
+  let msg = try {
+    let _ = parse("match xs with | x :: _ | [] -> x")
+    "no error"
+  } catch {
+    ParseError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "or-pattern alternatives must bind the same names")
+}
+
+///|
 test "parse match guard" {
   let expr = parse("match xs with | x :: _ if x == 1 -> x | _ -> 0")
   match expr {

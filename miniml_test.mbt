@@ -185,6 +185,30 @@ test "char pattern match evaluates" {
 }
 
 ///|
+test "or-pattern match evaluates" {
+  let code =
+    #| match [1] with
+    #| | [] | [_] -> 42
+    #| | _ -> 0
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "or-pattern guard applies to each alternative" {
+  let code =
+    #| match [1] with
+    #| | [x] | x :: _ if x == 1 -> 42
+    #| | _ -> 0
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "or-pattern contributes to exhaustiveness" {
+  let code = "fun b -> match b with | true | false -> 1"
+  assert_eq(@miniml.infer(code), "bool -> int")
+}
+
+///|
 test "match guard pattern binding shadows outer name" {
   let code =
     #| let x = 100 in

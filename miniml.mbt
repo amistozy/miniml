@@ -1205,6 +1205,69 @@ fn list_pattern_from_array(patterns : ArrayView[Pattern]) -> Pattern {
 }
 
 ///|
+fn add_unique_name(names : Array[String], name : String) -> Unit {
+  if !names.contains(name) {
+    names.push(name)
+  }
+}
+
+///|
+fn collect_pattern_bound_names(
+  pattern : Pattern,
+  names : Array[String],
+) -> Unit {
+  match pattern {
+    VarPat(name) => add_unique_name(names, name)
+    CtorPat(_, patterns) | TuplePat(patterns) =>
+      for pattern in patterns {
+        collect_pattern_bound_names(pattern, names)
+      }
+    ConsPat(head, tail) => {
+      collect_pattern_bound_names(head, names)
+      collect_pattern_bound_names(tail, names)
+    }
+    WildcardPat | IntPat(_) | BoolPat(_) | CharPat(_) | UnitPat | NilPat => ()
+  }
+}
+
+///|
+fn pattern_bound_names(pattern : Pattern) -> Array[String] {
+  let names = []
+  collect_pattern_bound_names(pattern, names)
+  names
+}
+
+///|
+fn same_name_set(lhs : Array[String], rhs : Array[String]) -> Bool {
+  lhs.length() == rhs.length() && lhs.all(name => rhs.contains(name))
+}
+
+///|
+fn parse_or_patterns(
+  tokens : ArrayView[Token],
+) -> (Array[Pattern], ArrayView[Token]) raise MiniMLError {
+  let (first, rest0) = parse_pattern(tokens)
+  let patterns = [first]
+  let expected_names = pattern_bound_names(first)
+  let mut current = rest0
+  while true {
+    match current {
+      [BarTok, .. rest1] => {
+        let (next_pattern, rest2) = parse_pattern(rest1)
+        let next_names = pattern_bound_names(next_pattern)
+        if !same_name_set(expected_names, next_names) {
+          raise ParseError("or-pattern alternatives must bind the same names")
+        }
+        patterns.push(next_pattern)
+        current = rest2
+      }
+      _ => break
+    }
+  }
+  (patterns, current)
+}
+
+///|
 fn parse_pattern_atom(
   tokens : ArrayView[Token],
 ) -> (Pattern, ArrayView[Token]) raise MiniMLError {
@@ -1780,27 +1843,27 @@ fn parse_or(
 ///|
 fn parse_match_arm(
   tokens : ArrayView[Token],
-) -> (MatchArm, ArrayView[Token]) raise MiniMLError {
+) -> (Array[MatchArm], ArrayView[Token]) raise MiniMLError {
   let tokens = if tokens is [BarTok, .. rest] { rest } else { tokens }
-  let (pattern, rest) = parse_pattern(tokens)
-  let (guard_, rest) = match rest {
+  let (patterns, rest0) = parse_or_patterns(tokens)
+  let (guard_, rest) = match rest0 {
     [IfTok, .. rest2] => {
       let (guard_expr, rest3) = parse_expr(rest2)
       (Some(guard_expr), rest3)
     }
-    _ => (None, rest)
+    _ => (None, rest0)
   }
   let rest = expect_token(rest, ArrowTok)
   let (body, rest2) = parse_expr(rest)
-  (MatchArm::{ pattern, guard_, body }, rest2)
+  (patterns.map(pattern => MatchArm::{ pattern, guard_, body }), rest2)
 }
 
 ///|
 fn parse_match_arm_no_seq(
   tokens : ArrayView[Token],
-) -> (MatchArm, ArrayView[Token]) raise MiniMLError {
+) -> (Array[MatchArm], ArrayView[Token]) raise MiniMLError {
   let tokens = if tokens is [BarTok, .. rest] { rest } else { tokens }
-  let (pattern, rest0) = parse_pattern(tokens)
+  let (patterns, rest0) = parse_or_patterns(tokens)
   let (guard_, rest) = match rest0 {
     [IfTok, .. rest2] => {
       let (guard_expr, rest3) = parse_expr_no_seq(rest2)
@@ -1810,7 +1873,7 @@ fn parse_match_arm_no_seq(
   }
   let rest1 = expect_token(rest, ArrowTok)
   let (body, rest2) = parse_expr_no_seq(rest1)
-  (MatchArm::{ pattern, guard_, body }, rest2)
+  (patterns.map(pattern => MatchArm::{ pattern, guard_, body }), rest2)
 }
 
 ///|
@@ -1826,13 +1889,13 @@ fn parse_match(
   let (scrutinee, rest2) = parse_expr(rest)
   let rest3 = expect_token(rest2, WithTok)
   let arms = []
-  let (first_arm, rest4) = parse_match_arm(rest3)
-  arms.push(first_arm)
+  let (first_arms, rest4) = parse_match_arm(rest3)
+  arms.append(first_arms)
   for current = rest4 {
     match current {
       [BarTok, ..] => {
-        let (arm, rest5) = parse_match_arm(current)
-        arms.push(arm)
+        let (more_arms, rest5) = parse_match_arm(current)
+        arms.append(more_arms)
         continue rest5
       }
       _ => break (MatchExpr(scrutinee, arms), current)
@@ -1853,13 +1916,13 @@ fn parse_match_no_seq(
   let (scrutinee, rest2) = parse_expr_no_seq(rest)
   let rest3 = expect_token(rest2, WithTok)
   let arms = []
-  let (first_arm, rest4) = parse_match_arm_no_seq(rest3)
-  arms.push(first_arm)
+  let (first_arms, rest4) = parse_match_arm_no_seq(rest3)
+  arms.append(first_arms)
   for current = rest4 {
     match current {
       [BarTok, ..] => {
-        let (arm, rest5) = parse_match_arm_no_seq(current)
-        arms.push(arm)
+        let (more_arms, rest5) = parse_match_arm_no_seq(current)
+        arms.append(more_arms)
         continue rest5
       }
       _ => break (MatchExpr(scrutinee, arms), current)
