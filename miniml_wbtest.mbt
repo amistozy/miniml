@@ -28,6 +28,14 @@ test "tokenize type annotation colon" {
 }
 
 ///|
+test "tokenize let rec and keyword" {
+  let tokens = tokenize("let rec even n = odd n and odd n = even n in even 0")
+  assert_eq(tokens[0], LetTok)
+  assert_eq(tokens[1], RecTok)
+  assert_true(tokens.contains(AndKwTok))
+}
+
+///|
 test "parse annotated fun binder" {
   let expr = parse("fun (x : int option) -> x")
   assert_true(
@@ -131,6 +139,63 @@ test "parse multi parameter let rec with return annotation" {
       VarExpr("add")
     ),
   )
+}
+
+///|
+test "parse mutually recursive let rec group" {
+  let expr = parse("let rec even n = odd n and odd n = even n in even")
+  match expr {
+    LetRecGroupExpr(bindings, VarExpr("even")) => {
+      assert_eq(bindings.length(), 2)
+      assert_eq(bindings[0].name, "even")
+      assert_eq(bindings[0].param, "n")
+      assert_true(
+        bindings[0].fun_body is ApplyExpr(VarExpr("odd"), VarExpr("n")),
+      )
+      assert_eq(bindings[1].name, "odd")
+      assert_eq(bindings[1].param, "n")
+      assert_true(
+        bindings[1].fun_body is ApplyExpr(VarExpr("even"), VarExpr("n")),
+      )
+    }
+    _ => assert_true(false)
+  }
+}
+
+///|
+test "parse let and group" {
+  let expr = parse("let x = 1 and y = 2 in (x, y)")
+  match expr {
+    LetGroupExpr(bindings, TupleExpr([VarExpr("x"), VarExpr("y")])) => {
+      assert_eq(bindings.length(), 2)
+      assert_true(bindings[0].pattern is VarPat("x"))
+      assert_true(bindings[0].annot is None)
+      assert_true(bindings[0].bound is IntExpr(1))
+      assert_true(bindings[1].pattern is VarPat("y"))
+      assert_true(bindings[1].bound is IntExpr(2))
+    }
+    _ => assert_true(false)
+  }
+}
+
+///|
+test "parse let and function sugar" {
+  let expr = parse("let add x y = x + y and one = 1 in add")
+  match expr {
+    LetGroupExpr(bindings, VarExpr("add")) => {
+      assert_eq(bindings.length(), 2)
+      assert_true(
+        bindings[0].bound
+        is FunExpr(
+          "x",
+          None,
+          FunExpr("y", None, BinaryExpr(Add, VarExpr("x"), VarExpr("y")))
+        ),
+      )
+      assert_true(bindings[1].bound is IntExpr(1))
+    }
+    _ => assert_true(false)
+  }
 }
 
 ///|

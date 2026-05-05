@@ -76,7 +76,9 @@ pub(all) enum Expr {
   IfExpr(Expr, Expr, Expr)
   EnumExpr(EnumDecl, Expr)
   LetExpr(Pattern, DeclType?, Expr, Expr)
+  LetGroupExpr(Array[LetBinding], Expr)
   LetRecExpr(String, String, DeclType?, DeclType?, Expr, Expr)
+  LetRecGroupExpr(Array[RecBinding], Expr)
   FunExpr(String, DeclType?, Expr)
   AscribeExpr(Expr, DeclType)
   ApplyExpr(Expr, Expr)
@@ -89,6 +91,12 @@ pub(all) enum Expr {
   MatchExpr(Expr, Array[MatchArm])
 }
 pub impl Show for Expr
+
+pub(all) struct LetBinding {
+  pattern : Pattern
+  annot : DeclType?
+  bound : Expr
+}
 
 pub(all) struct MatchArm {
   pattern : Pattern
@@ -108,6 +116,14 @@ pub(all) enum Pattern {
 }
 pub impl Show for Pattern
 
+pub(all) struct RecBinding {
+  name : String
+  param : String
+  param_annot : DeclType?
+  return_annot : DeclType?
+  fun_body : Expr
+}
+
 pub(all) struct Scheme {
   vars : Array[Int]
   ty : Type
@@ -122,6 +138,7 @@ pub(all) enum Token {
   LetTok
   InTok
   RecTok
+  AndKwTok
   EnumTok
   FunTok
   IfTok

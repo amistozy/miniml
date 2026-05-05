@@ -28,6 +28,8 @@ The current language supports:
 - optional type annotations on `let`, `let rec`, and `fun`
 - expression-level type ascription: `expr : type`
 - multi-parameter `fun`, `let`, and `let rec` via curried syntax sugar
+- non-recursive parallel bindings with `let ... and ...`
+- mutually recursive functions with `let rec ... and ...`
 
 ## Examples
 
@@ -112,6 +114,24 @@ let rec pow base exp =
   if exp == 0 then 1 else base * pow base (exp - 1)
 in
 pow 2 5
+```
+
+Mutually recursive functions:
+
+```ml
+let rec even n =
+  if n == 0 then true else odd (n - 1)
+and odd n =
+  if n == 0 then false else even (n - 1)
+in
+even 10
+```
+
+Parallel non-recursive bindings:
+
+```ml
+let add x y = x + y and one = 1 in
+add one 41
 ```
 
 ## CLI

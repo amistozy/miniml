@@ -26,6 +26,7 @@ pub(all) enum Token {
   LetTok
   InTok
   RecTok
+  AndKwTok
   EnumTok
   FunTok
   IfTok
@@ -70,6 +71,7 @@ pub impl Show for Token with output(self, logger) {
     LetTok => "let"
     InTok => "in"
     RecTok => "rec"
+    AndKwTok => "and"
     EnumTok => "enum"
     FunTok => "fun"
     IfTok => "if"
@@ -190,6 +192,22 @@ pub(all) struct EnumDecl {
 }
 
 ///|
+pub(all) struct RecBinding {
+  name : String
+  param : String
+  param_annot : DeclType?
+  return_annot : DeclType?
+  fun_body : Expr
+}
+
+///|
+pub(all) struct LetBinding {
+  pattern : Pattern
+  annot : DeclType?
+  bound : Expr
+}
+
+///|
 pub(all) enum Expr {
   IntExpr(Int)
   BoolExpr(Bool)
@@ -197,7 +215,9 @@ pub(all) enum Expr {
   IfExpr(Expr, Expr, Expr)
   EnumExpr(EnumDecl, Expr)
   LetExpr(Pattern, DeclType?, Expr, Expr)
+  LetGroupExpr(Array[LetBinding], Expr)
   LetRecExpr(String, String, DeclType?, DeclType?, Expr, Expr)
+  LetRecGroupExpr(Array[RecBinding], Expr)
   FunExpr(String, DeclType?, Expr)
   AscribeExpr(Expr, DeclType)
   ApplyExpr(Expr, Expr)
@@ -285,6 +305,25 @@ priv struct FnParam {
 }
 
 ///|
+fn rec_binding_to_string(binding : RecBinding) -> String {
+  let param_s = binder_to_string(binding.param, binding.param_annot)
+  let return_s = match binding.return_annot {
+    Some(type_) => " : \{decl_type_to_string(type_)}"
+    None => ""
+  }
+  "\{binding.name} \{param_s}\{return_s} = \{expr_to_string(binding.fun_body)}"
+}
+
+///|
+fn let_binding_to_string(binding : LetBinding) -> String {
+  let annot_s = match binding.annot {
+    Some(type_) => " : \{decl_type_to_string(type_)}"
+    None => ""
+  }
+  "\{pattern_to_string(binding.pattern)}\{annot_s} = \{expr_to_string(binding.bound)}"
+}
+
+///|
 priv enum MatchMatrixKind {
   BoolKind
   OptionKind
@@ -311,6 +350,12 @@ fn expr_to_string(expr : Expr) -> String {
       }
       "let \{pattern_to_string(pattern)}\{annot_s} = \{expr_to_string(bound)} in \{expr_to_string(body)}"
     }
+    LetGroupExpr(bindings, body) => {
+      let binding_s = bindings
+        .map(binding => let_binding_to_string(binding))
+        .join(" and ")
+      "let \{binding_s} in \{expr_to_string(body)}"
+    }
     LetRecExpr(name, param, param_annot, return_annot, fun_body, body) => {
       let param_s = binder_to_string(param, param_annot)
       let return_s = match return_annot {
@@ -318,6 +363,12 @@ fn expr_to_string(expr : Expr) -> String {
         None => ""
       }
       "let rec \{name} \{param_s}\{return_s} = \{expr_to_string(fun_body)} in \{expr_to_string(body)}"
+    }
+    LetRecGroupExpr(bindings, body) => {
+      let binding_s = bindings
+        .map(binding => rec_binding_to_string(binding))
+        .join(" and ")
+      "let rec \{binding_s} in \{expr_to_string(body)}"
     }
     FunExpr(param, annot, body) =>
       "fun \{binder_to_string(param, annot)} -> \{expr_to_string(body)}"
@@ -427,6 +478,33 @@ fn ascribe_if_needed(expr : Expr, annot : DeclType?) -> Expr {
   match annot {
     Some(type_) => AscribeExpr(expr, type_)
     None => expr
+  }
+}
+
+///|
+fn make_rec_binding(
+  name : String,
+  params : Array[FnParam],
+  return_annot : DeclType?,
+  fun_body0 : Expr,
+) -> RecBinding {
+  let first = params[0]
+  let tail = Array::new()
+  for i = 1; i < params.length(); i = i + 1 {
+    tail.push(params[i])
+  }
+  let fun_body = if tail.is_empty() {
+    fun_body0
+  } else {
+    params_to_expr(tail, ascribe_if_needed(fun_body0, return_annot))
+  }
+  let outer_return_annot = if tail.is_empty() { return_annot } else { None }
+  RecBinding::{
+    name,
+    param: first.name,
+    param_annot: first.annot,
+    return_annot: outer_return_annot,
+    fun_body,
   }
 }
 
@@ -851,6 +929,7 @@ pub fn tokenize(code : String) -> Array[Token] raise MiniMLError {
           "let" => LetTok
           "in" => InTok
           "rec" => RecTok
+          "and" => AndKwTok
           "enum" => EnumTok
           "fun" => FunTok
           "if" => IfTok
@@ -1617,6 +1696,44 @@ fn parse_binder_list(
 }
 
 ///|
+fn parse_rec_binding(
+  name : String,
+  tokens : ArrayView[Token],
+) -> (RecBinding, ArrayView[Token]) raise MiniMLError {
+  let (params, rest0) = parse_binder_list(tokens)
+  let (return_annot, rest1) = parse_type_annotation(rest0)
+  let rest2 = expect_token(rest1, EqTok)
+  let (fun_body0, rest3) = parse_expr(rest2)
+  (make_rec_binding(name, params, return_annot, fun_body0), rest3)
+}
+
+///|
+fn parse_nonrec_binding(
+  pattern : Pattern,
+  tokens : ArrayView[Token],
+) -> (LetBinding, ArrayView[Token]) raise MiniMLError {
+  match (pattern, tokens) {
+    (VarPat(name), [tok, ..]) if is_binder_start(tok) => {
+      let (params, rest0) = parse_binder_list(tokens)
+      let (return_annot, rest1) = parse_type_annotation(rest0)
+      let rest2 = expect_token(rest1, EqTok)
+      let (fun_body0, rest3) = parse_expr(rest2)
+      let bound = params_to_expr(
+        params,
+        ascribe_if_needed(fun_body0, return_annot),
+      )
+      (LetBinding::{ pattern: VarPat(name), annot: None, bound }, rest3)
+    }
+    _ => {
+      let (annot, rest0) = parse_type_annotation(tokens)
+      let rest1 = expect_token(rest0, EqTok)
+      let (bound, rest2) = parse_expr(rest1)
+      (LetBinding::{ pattern, annot, bound }, rest2)
+    }
+  }
+}
+
+///|
 fn parse_enum_variant_decl(
   tokens : ArrayView[Token],
 ) -> (EnumVariantDecl, ArrayView[Token]) raise MiniMLError {
@@ -1761,58 +1878,63 @@ fn parse_let(
   }
   if tok2 == RecTok {
     let (name, rest3) = expect_ident(rest2)
-    let (params, rest4) = parse_binder_list(rest3)
-    let (return_annot, rest5) = parse_type_annotation(rest4)
-    let rest6 = expect_token(rest5, EqTok)
-    let (fun_body0, rest7) = parse_expr(rest6)
-    let rest8 = expect_token(rest7, InTok)
+    let (first_binding, rest4) = parse_rec_binding(name, rest3)
+    let bindings = Array::new()
+    bindings.push(first_binding)
+    let mut current = rest4
+    while true {
+      match current {
+        [AndKwTok, .. rest5] => {
+          let (next_name, rest6) = expect_ident(rest5)
+          let (binding, rest7) = parse_rec_binding(next_name, rest6)
+          bindings.push(binding)
+          current = rest7
+        }
+        _ => break
+      }
+    }
+    let rest8 = expect_token(current, InTok)
     let (body, rest9) = parse_expr(rest8)
-    let first = params[0]
-    let tail = Array::new()
-    for i = 1; i < params.length(); i = i + 1 {
-      tail.push(params[i])
-    }
-    let fun_body = if tail.is_empty() {
-      fun_body0
+    if bindings.length() == 1 {
+      let binding = bindings[0]
+      (
+        LetRecExpr(
+          binding.name,
+          binding.param,
+          binding.param_annot,
+          binding.return_annot,
+          binding.fun_body,
+          body,
+        ),
+        rest9,
+      )
     } else {
-      params_to_expr(tail, ascribe_if_needed(fun_body0, return_annot))
+      (LetRecGroupExpr(bindings, body), rest9)
     }
-    let outer_return_annot = if tail.is_empty() { return_annot } else { None }
-    (
-      LetRecExpr(
-        name,
-        first.name,
-        first.annot,
-        outer_return_annot,
-        fun_body,
-        body,
-      ),
-      rest9,
-    )
   } else {
     let (pattern, rest3) = parse_pattern(rest)
-    match (pattern, rest3) {
-      (VarPat(name), [tok3, ..]) if is_binder_start(tok3) => {
-        let (params, rest4) = parse_binder_list(rest3)
-        let (return_annot, rest5) = parse_type_annotation(rest4)
-        let rest6 = expect_token(rest5, EqTok)
-        let (fun_body0, rest7) = parse_expr(rest6)
-        let rest8 = expect_token(rest7, InTok)
-        let (body, rest9) = parse_expr(rest8)
-        let bound = params_to_expr(
-          params,
-          ascribe_if_needed(fun_body0, return_annot),
-        )
-        (LetExpr(VarPat(name), None, bound, body), rest9)
+    let (first_binding, rest4) = parse_nonrec_binding(pattern, rest3)
+    let bindings = Array::new()
+    bindings.push(first_binding)
+    let mut current = rest4
+    while true {
+      match current {
+        [AndKwTok, .. rest5] => {
+          let (next_pattern, rest6) = parse_pattern(rest5)
+          let (binding, rest7) = parse_nonrec_binding(next_pattern, rest6)
+          bindings.push(binding)
+          current = rest7
+        }
+        _ => break
       }
-      _ => {
-        let (annot, rest4) = parse_type_annotation(rest3)
-        let rest5 = expect_token(rest4, EqTok)
-        let (fun_body, rest6) = parse_expr(rest5)
-        let rest7 = expect_token(rest6, InTok)
-        let (body, rest8) = parse_expr(rest7)
-        (LetExpr(pattern, annot, fun_body, body), rest8)
-      }
+    }
+    let rest5 = expect_token(current, InTok)
+    let (body, rest6) = parse_expr(rest5)
+    if bindings.length() == 1 {
+      let binding = bindings[0]
+      (LetExpr(binding.pattern, binding.annot, binding.bound, body), rest6)
+    } else {
+      (LetGroupExpr(bindings, body), rest6)
     }
   }
 }
@@ -2095,6 +2217,47 @@ fn eval_enum_body(
 }
 
 ///|
+fn eval_rec_group(
+  bindings : Array[RecBinding],
+  env : Env,
+  body : Expr,
+) -> Value raise MiniMLError {
+  let mut rec_env = env
+  let cells = Array::new()
+  for binding in bindings {
+    let cell : Ref[Value?] = @ref.new(None)
+    rec_env = rec_env.extend_cell(binding.name, cell)
+    cells.push(cell)
+  }
+  for i = 0; i < bindings.length(); i = i + 1 {
+    let binding = bindings[i]
+    let closure = ClosureValue(binding.param, binding.fun_body, rec_env)
+    cells[i].val = Some(closure)
+  }
+  eval_expr(body, rec_env)
+}
+
+///|
+fn eval_let_group(
+  bindings : Array[LetBinding],
+  env : Env,
+  body : Expr,
+) -> Value raise MiniMLError {
+  let values = Array::new()
+  for binding in bindings {
+    values.push(eval_expr(binding.bound, env))
+  }
+  let mut body_env = env
+  for i = 0; i < bindings.length(); i = i + 1 {
+    match match_pattern(bindings[i].pattern, values[i], body_env) {
+      Some(next_env) => body_env = next_env
+      None => raise RuntimeError("let pattern match failed")
+    }
+  }
+  eval_expr(body, body_env)
+}
+
+///|
 fn eval_binary(
   op : BinaryOp,
   lhs : Value,
@@ -2145,6 +2308,7 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
         None => raise RuntimeError("let pattern match failed")
       }
     }
+    LetGroupExpr(bindings, body) => eval_let_group(bindings, env, body)
     LetRecExpr(name, param, _, _, fun_body, body) => {
       let cell : Ref[Value?] = @ref.new(None)
       let rec_env = env.extend_cell(name, cell)
@@ -2152,6 +2316,7 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
       cell.val = Some(closure)
       eval_expr(body, rec_env)
     }
+    LetRecGroupExpr(bindings, body) => eval_rec_group(bindings, env, body)
     FunExpr(param, _, body) => ClosureValue(param, body, env)
     AscribeExpr(expr, _) => eval_expr(expr, env)
     ApplyExpr(func, arg) => {
@@ -3677,6 +3842,92 @@ fn infer_enum_body(
 }
 
 ///|
+fn rec_binding_func_type(
+  binding : RecBinding,
+  ctx : InferCtx,
+) -> Type raise MiniMLError {
+  let arg_type = match binding.param_annot {
+    Some(type_) => resolve_annotation_type(type_, ctx)
+    None => fresh_type_var(ctx)
+  }
+  let ret_type = match binding.return_annot {
+    Some(type_) => resolve_annotation_type(type_, ctx)
+    None => fresh_type_var(ctx)
+  }
+  FunType(arg_type, ret_type)
+}
+
+///|
+fn infer_rec_group_body(
+  bindings : Array[RecBinding],
+  body : Expr,
+  env : TypeEnv,
+  ctx : InferCtx,
+) -> Type raise MiniMLError {
+  let func_types = Array::new()
+  let mut env1 = env
+  for binding in bindings {
+    let func_type = rec_binding_func_type(binding, ctx)
+    func_types.push(func_type)
+    env1 = env1.extend(binding.name, Scheme::{ vars: [], ty: func_type })
+  }
+  for i = 0; i < bindings.length(); i = i + 1 {
+    let binding = bindings[i]
+    let func_type = prune_type(func_types[i], ctx)
+    let (arg_type, ret_type) = match func_type {
+      FunType(arg_type, ret_type) => (arg_type, ret_type)
+      _ =>
+        raise TypeError("internal error: recursive binding is not a function")
+    }
+    let env2 = env1.extend(binding.param, Scheme::{ vars: [], ty: arg_type })
+    let body_type = infer_expr(binding.fun_body, env2, ctx)
+    unify(ret_type, body_type, ctx)
+  }
+  let mut env3 = env
+  for i = 0; i < bindings.length(); i = i + 1 {
+    let final_type = prune_type(func_types[i], ctx)
+    let scheme = generalize(env, final_type, ctx)
+    env3 = env3.extend(bindings[i].name, scheme)
+  }
+  infer_expr(body, env3, ctx)
+}
+
+///|
+fn infer_let_group_body(
+  bindings : Array[LetBinding],
+  body : Expr,
+  env : TypeEnv,
+  ctx : InferCtx,
+) -> Type raise MiniMLError {
+  let bound_types = Array::new()
+  for binding in bindings {
+    let bound_type = infer_expr(binding.bound, env, ctx)
+    match binding.annot {
+      Some(type_) => {
+        let expected = resolve_annotation_type(type_, ctx)
+        unify(bound_type, expected, ctx)
+      }
+      None => ()
+    }
+    bound_types.push(prune_type(bound_type, ctx))
+  }
+  for i = 0; i < bindings.length(); i = i + 1 {
+    let _ = infer_pattern(bindings[i].pattern, bound_types[i], env, ctx)
+  }
+  let mut body_env = env
+  for i = 0; i < bindings.length(); i = i + 1 {
+    body_env = bind_generalized_pattern(
+      bindings[i].pattern,
+      bound_types[i],
+      env,
+      body_env,
+      ctx,
+    )
+  }
+  infer_expr(body, body_env, ctx)
+}
+
+///|
 fn infer_expr(
   expr : Expr,
   env : TypeEnv,
@@ -3711,6 +3962,8 @@ fn infer_expr(
       )
       infer_expr(body, body_env, ctx)
     }
+    LetGroupExpr(bindings, body) =>
+      infer_let_group_body(bindings, body, env, ctx)
     LetRecExpr(name, param, param_annot, return_annot, fun_body, body) => {
       let arg_type = match param_annot {
         Some(type_) => resolve_annotation_type(type_, ctx)
@@ -3730,6 +3983,8 @@ fn infer_expr(
       let env3 = env.extend(name, scheme)
       infer_expr(body, env3, ctx)
     }
+    LetRecGroupExpr(bindings, body) =>
+      infer_rec_group_body(bindings, body, env, ctx)
     FunExpr(param, annot, body) => {
       let arg_type = match annot {
         Some(type_) => resolve_annotation_type(type_, ctx)

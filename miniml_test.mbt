@@ -329,3 +329,75 @@ test "multi parameter let rec return annotation constrains result" {
   let code = "let rec add (x : int) (y : int) : int = x + y in add"
   assert_eq(@miniml.infer(code), "int -> int -> int")
 }
+
+///|
+test "mutually recursive even odd evaluates" {
+  let code =
+    #| let rec even n =
+    #|   if n == 0 then true else odd (n - 1)
+    #| and odd n =
+    #|   if n == 0 then false else even (n - 1)
+    #| in
+    #| even 10
+  assert_eq(@miniml.interpret(code), "true")
+}
+
+///|
+test "mutually recursive functions infer types" {
+  let code =
+    #| let rec even n =
+    #|   if n == 0 then true else odd (n - 1)
+    #| and odd n =
+    #|   if n == 0 then false else even (n - 1)
+    #| in
+    #| (even, odd)
+  assert_eq(@miniml.infer(code), "(int -> bool * int -> bool)")
+}
+
+///|
+test "mutually recursive annotations constrain both bindings" {
+  let code =
+    #| let rec even (n : int) : bool =
+    #|   if n == 0 then true else odd (n - 1)
+    #| and odd (n : int) : bool =
+    #|   if n == 0 then false else even (n - 1)
+    #| in
+    #| odd
+  assert_eq(@miniml.infer(code), "int -> bool")
+}
+
+///|
+test "let and group evaluates" {
+  let code = "let x = 20 and y = 22 in x + y"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "let and group supports function sugar" {
+  let code = "let add x y = x + y and one = 1 in add one 41"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "let and group is simultaneous not sequential" {
+  let msg = try {
+    let _ = @miniml.infer("let x = 1 and y = x in y")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "unbound variable `x`")
+}
+
+///|
+test "let and group body sees all bindings" {
+  let code = "let x = 1 and y = 2 in (x, y)"
+  assert_eq(@miniml.interpret(code), "(1, 2)")
+}
+
+///|
+test "let and group generalizes independently" {
+  let code = "let id = fun x -> x and k = 1 in (id true, id k)"
+  assert_eq(@miniml.interpret(code), "(true, 1)")
+}
