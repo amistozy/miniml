@@ -3037,14 +3037,12 @@ fn specialize_bool_rows(
 ) -> Array[Array[Pattern]] {
   let result = []
   for row in rows {
-    guard row.length() > 0 else { continue }
-    let head = row[0]
-    let tail = drop_first_pattern(row)
+    guard row is [head, .. tail] else {  }
     if pattern_is_wild(head) {
-      result.push(tail)
+      result.push(tail.to_owned())
     } else {
       match head {
-        BoolPat(value) if value == target => result.push(tail)
+        BoolPat(value) if value == target => result.push(tail.to_owned())
         _ => ()
       }
     }
@@ -3056,14 +3054,12 @@ fn specialize_bool_rows(
 fn specialize_none_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
   let result = []
   for row in rows {
-    guard row.length() > 0 else { continue }
-    let head = row[0]
-    let tail = drop_first_pattern(row)
+    guard row is [head, .. tail] else {  }
     if pattern_is_wild(head) {
-      result.push(tail)
+      result.push(tail.to_owned())
     } else {
       match head {
-        CtorPat("None", []) => result.push(tail)
+        CtorPat("None", []) => result.push(tail.to_owned())
         _ => ()
       }
     }
@@ -3075,14 +3071,12 @@ fn specialize_none_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
 fn specialize_some_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
   let result = []
   for row in rows {
-    guard row.length() > 0 else { continue }
-    let head = row[0]
-    let tail = drop_first_pattern(row)
+    guard row is [head, .. tail] else {  }
     if pattern_is_wild(head) {
-      result.push(concat_patterns([WildcardPat], tail))
+      result.push([WildcardPat, ..tail])
     } else {
       match head {
-        CtorPat("Some", [inner]) => result.push(concat_patterns([inner], tail))
+        CtorPat("Some", [inner]) => result.push([inner, ..tail])
         _ => ()
       }
     }
@@ -3098,18 +3092,16 @@ fn specialize_enum_rows(
 ) -> Array[Array[Pattern]] {
   let result = []
   for row in rows {
-    guard row.length() > 0 else { continue }
-    let head = row[0]
-    let tail = drop_first_pattern(row)
+    guard row is [head, .. tail] else {  }
     if pattern_is_wild(head) {
-      result.push(concat_patterns(wildcard_patterns(arity), tail))
+      result.push([..wildcard_patterns(arity), ..tail])
     } else {
       match head {
         CtorPat(name, patterns) if name == ctor_name =>
           if patterns.length() == arity {
-            result.push(concat_patterns(patterns, tail))
+            result.push([..patterns, ..tail])
           } else if arity == 0 && patterns.is_empty() {
-            result.push(tail)
+            result.push(tail.to_owned())
           }
         _ => ()
       }
@@ -3125,14 +3117,12 @@ fn specialize_int_rows(
 ) -> Array[Array[Pattern]] {
   let result = []
   for row in rows {
-    guard row.length() > 0 else { continue }
-    let head = row[0]
-    let tail = drop_first_pattern(row)
+    guard row is [head, .. tail] else {  }
     if pattern_is_wild(head) {
-      result.push(tail)
+      result.push(tail.to_owned())
     } else {
       match head {
-        IntPat(value) if value == target => result.push(tail)
+        IntPat(value) if value == target => result.push(tail.to_owned())
         _ => ()
       }
     }
@@ -3147,15 +3137,13 @@ fn specialize_tuple_rows(
 ) -> Array[Array[Pattern]] {
   let result = []
   for row in rows {
-    guard row.length() > 0 else { continue }
-    let head = row[0]
-    let tail = drop_first_pattern(row)
+    guard row is [head, .. tail] else {  }
     if pattern_is_wild(head) {
-      result.push(concat_patterns(wildcard_patterns(arity), tail))
+      result.push([..wildcard_patterns(arity), ..tail])
     } else {
       match head {
         TuplePat(parts) if parts.length() == arity =>
-          result.push(concat_patterns(parts, tail))
+          result.push([..parts, ..tail])
         _ => ()
       }
     }
@@ -3167,14 +3155,12 @@ fn specialize_tuple_rows(
 fn specialize_nil_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
   let result = []
   for row in rows {
-    guard row.length() > 0 else { continue }
-    let head = row[0]
-    let tail = drop_first_pattern(row)
+    guard row is [head, .. tail] else {  }
     if pattern_is_wild(head) {
-      result.push(tail)
+      result.push(tail.to_owned())
     } else {
       match head {
-        NilPat => result.push(tail)
+        NilPat => result.push(tail.to_owned())
         _ => ()
       }
     }
@@ -3186,15 +3172,12 @@ fn specialize_nil_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
 fn specialize_cons_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
   let result = []
   for row in rows {
-    guard row.length() > 0 else { continue }
-    let head = row[0]
-    let tail = drop_first_pattern(row)
+    guard row is [head, .. tail] else {  }
     if pattern_is_wild(head) {
-      result.push(concat_patterns([WildcardPat, WildcardPat], tail))
+      result.push([WildcardPat, WildcardPat, ..tail])
     } else {
       match head {
-        ConsPat(head_pat, tail_pat) =>
-          result.push(concat_patterns([head_pat, tail_pat], tail))
+        ConsPat(head_pat, tail_pat) => result.push([head_pat, tail_pat, ..tail])
         _ => ()
       }
     }
@@ -3205,7 +3188,7 @@ fn specialize_cons_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
 ///|
 fn patterns_cover_vector(
   rows : Array[Array[Pattern]],
-  types : Array[Type],
+  types : ArrayView[Type],
   ctx : InferCtx,
 ) -> Bool {
   if types.length() == 0 {
@@ -3217,7 +3200,7 @@ fn patterns_cover_vector(
     }
   }
   let head_ty = prune_type(types[0], ctx)
-  let tail_tys = array_slice_types(types, 1)
+  let tail_tys = types[1:]
   match match_matrix_kind(head_ty, ctx) {
     UniversalKind => {
       let defaults = default_rows(rows)
@@ -3236,7 +3219,7 @@ fn patterns_cover_vector(
           )
           let some_ok = patterns_cover_vector(
             specialize_some_rows(rows),
-            concat_types([elem_ty], tail_tys),
+            [elem_ty, ..tail_tys],
             ctx,
           )
           none_ok && some_ok
@@ -3265,7 +3248,7 @@ fn patterns_cover_vector(
                 resolve_decl_type(field, decl.name, enum_id, type_params, ctx),
               )
             }
-            let tys2 = concat_types(field_tys, tail_tys)
+            let tys2 = [..field_tys, ..tail_tys]
             if !patterns_cover_vector(rows2, tys2, ctx) {
               return false
             }
@@ -3278,7 +3261,7 @@ fn patterns_cover_vector(
       match head_ty {
         TupleType(elem_tys) => {
           let next_rows = specialize_tuple_rows(rows, arity)
-          let next_tys = concat_types(elem_tys, tail_tys)
+          let next_tys = [..elem_tys, ..tail_tys]
           patterns_cover_vector(next_rows, next_tys, ctx)
         }
         _ => false
@@ -3291,7 +3274,7 @@ fn patterns_cover_vector(
             tail_tys,
             ctx,
           )
-          let cons_tys = concat_types([elem_ty, head_ty], tail_tys)
+          let cons_tys = [elem_ty, head_ty, ..tail_tys]
           let cons_ok = patterns_cover_vector(
             specialize_cons_rows(rows),
             cons_tys,
