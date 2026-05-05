@@ -53,6 +53,16 @@ test "unit literal infers unit type" {
 }
 
 ///|
+test "char literal evaluates" {
+  assert_eq(@miniml.interpret("'a'"), "'a'")
+}
+
+///|
+test "char literal infers char type" {
+  assert_eq(@miniml.infer("'a'"), "char")
+}
+
+///|
 test "sequence evaluates in order and returns rhs" {
   let code = "(); 42"
   assert_eq(@miniml.interpret(code), "42")
@@ -165,6 +175,12 @@ test "match guard evaluates" {
 ///|
 test "unit pattern match evaluates" {
   let code = "match () with | () -> 42"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "char pattern match evaluates" {
+  let code = "match 'x' with | 'x' -> 42 | _ -> 0"
   assert_eq(@miniml.interpret(code), "42")
 }
 
@@ -367,6 +383,12 @@ test "unit annotation evaluates" {
 }
 
 ///|
+test "char annotation evaluates" {
+  let code = "let c : char = 'z' in c"
+  assert_eq(@miniml.interpret(code), "'z'")
+}
+
+///|
 test "string annotation evaluates" {
   let code = "let greet : string = \"hello\" in greet"
   assert_eq(@miniml.interpret(code), "\"hello\"")
@@ -410,6 +432,12 @@ test "string equality works" {
 ///|
 test "unit equality works" {
   let code = "if () == () then 42 else 0"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "char equality works" {
+  let code = "if 'a' == 'a' then 42 else 0"
   assert_eq(@miniml.interpret(code), "42")
 }
 

@@ -22,7 +22,7 @@ and sequencing are all expressed within one expression tree.
 
 The current implementation supports:
 
-- primitive values: `int`, `bool`, `string`, and `unit`
+- primitive values: `int`, `bool`, `char`, `string`, and `unit`
 - functions, application, and lexical closures
 - `if ... then ... else ...`
 - `let` and `let rec`
@@ -66,6 +66,14 @@ Strings:
 ```ml
 let greet : string = "hello" in
 if greet == "hello" then greet else "bye"
+```
+
+Characters:
+
+```ml
+match 'x' with
+| 'x' -> 42
+| _ -> 0
 ```
 
 Unit and sequencing:

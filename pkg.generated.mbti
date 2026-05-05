@@ -46,6 +46,7 @@ pub(all) enum DeclType {
   UnitDeclType
   IntDeclType
   BoolDeclType
+  CharDeclType
   StringDeclType
   TypeVarDeclType(String)
   NamedDeclType(String, Array[DeclType])
@@ -75,6 +76,7 @@ pub(all) enum Expr {
   UnitExpr
   IntExpr(Int)
   BoolExpr(Bool)
+  CharExpr(Char)
   StringExpr(String)
   VarExpr(String)
   IfExpr(Expr, Expr, Expr)
@@ -113,6 +115,7 @@ pub(all) enum Pattern {
   WildcardPat
   IntPat(Int)
   BoolPat(Bool)
+  CharPat(Char)
   UnitPat
   VarPat(String)
   CtorPat(String, Array[Pattern])
@@ -138,6 +141,7 @@ pub(all) struct Scheme {
 pub(all) enum Token {
   IntTok(Int)
   BoolTok(Bool)
+  CharTok(Char)
   StringTok(String)
   IdentTok(String)
   CtorTok(String)
@@ -187,6 +191,7 @@ pub(all) enum Type {
   UnitType
   IntType
   BoolType
+  CharType
   StringType
   VarType(Int)
   FunType(Type, Type)
@@ -205,6 +210,7 @@ pub(all) enum Value {
   UnitValue
   IntValue(Int)
   BoolValue(Bool)
+  CharValue(Char)
   StringValue(String)
   ClosureValue(String, Expr, Env)
   CtorFuncValue(String, Int, Array[Value])

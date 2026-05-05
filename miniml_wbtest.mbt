@@ -40,6 +40,12 @@ test "tokenize string literal" {
 }
 
 ///|
+test "tokenize char literal" {
+  let tokens = tokenize("'\\n'")
+  assert_eq(tokens[0], CharTok('\n'))
+}
+
+///|
 test "tokenize semicolon" {
   let tokens = tokenize("(); 1")
   assert_eq(tokens[2], SemiTok)
@@ -103,9 +109,24 @@ test "parse string literal expression" {
 }
 
 ///|
+test "parse char literal expression" {
+  let expr = parse("'a'")
+  assert_true(expr is CharExpr('a'))
+}
+
+///|
 test "parse sequence expression" {
   let expr = parse("(); 1")
   assert_true(expr is SeqExpr(UnitExpr, IntExpr(1)))
+}
+
+///|
+test "parse char annotation" {
+  let expr = parse("let c : char = 'x' in c")
+  assert_true(
+    expr
+    is LetExpr(VarPat("c"), Some(CharDeclType), CharExpr('x'), VarExpr("c")),
+  )
 }
 
 ///|
@@ -425,6 +446,19 @@ test "parse unit pattern match" {
       assert_eq(arms.length(), 1)
       assert_true(arms[0].pattern is UnitPat)
       assert_true(arms[0].body is IntExpr(1))
+    }
+    _ => assert_true(false)
+  }
+}
+
+///|
+test "parse char pattern match" {
+  let expr = parse("match 'x' with | 'x' -> 1 | _ -> 0")
+  match expr {
+    MatchExpr(CharExpr('x'), arms) => {
+      assert_eq(arms.length(), 2)
+      assert_true(arms[0].pattern is CharPat('x'))
+      assert_true(arms[1].pattern is WildcardPat)
     }
     _ => assert_true(false)
   }

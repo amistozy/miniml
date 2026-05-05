@@ -20,6 +20,7 @@ pub impl Show for MiniMLError with output(self, logger) {
 pub(all) enum Token {
   IntTok(Int)
   BoolTok(Bool)
+  CharTok(Char)
   StringTok(String)
   IdentTok(String)
   CtorTok(String)
@@ -69,6 +70,7 @@ pub impl Show for Token with output(self, logger) {
   let s = match self {
     IntTok(n) => "Int(\{n})"
     BoolTok(b) => "Bool(\{b})"
+    CharTok(c) => "Char(\{escape_char_literal(c)})"
     StringTok(text) => "String(\{escape_string_literal(text)})"
     IdentTok(name) => "Ident(\{name})"
     CtorTok(name) => "Ctor(\{name})"
@@ -155,6 +157,7 @@ pub(all) enum Pattern {
   WildcardPat
   IntPat(Int)
   BoolPat(Bool)
+  CharPat(Char)
   UnitPat
   VarPat(String)
   CtorPat(String, Array[Pattern])
@@ -180,6 +183,7 @@ pub(all) enum DeclType {
   UnitDeclType
   IntDeclType
   BoolDeclType
+  CharDeclType
   StringDeclType
   TypeVarDeclType(String)
   NamedDeclType(String, Array[DeclType])
@@ -223,6 +227,7 @@ pub(all) enum Expr {
   UnitExpr
   IntExpr(Int)
   BoolExpr(Bool)
+  CharExpr(Char)
   StringExpr(String)
   VarExpr(String)
   IfExpr(Expr, Expr, Expr)
@@ -260,6 +265,7 @@ pub(all) enum Value {
   UnitValue
   IntValue(Int)
   BoolValue(Bool)
+  CharValue(Char)
   StringValue(String)
   ClosureValue(String, Expr, Env)
   CtorFuncValue(String, Int, Array[Value])
@@ -279,6 +285,7 @@ pub(all) enum Type {
   UnitType
   IntType
   BoolType
+  CharType
   StringType
   VarType(Int)
   FunType(Type, Type)
@@ -376,11 +383,29 @@ fn escape_string_literal(text : String) -> String {
 }
 
 ///|
+fn escape_char_body(c : Char) -> String {
+  match c {
+    '\'' => "\\'"
+    '\\' => "\\\\"
+    '\n' => "\\n"
+    '\r' => "\\r"
+    '\t' => "\\t"
+    _ => c.to_string()
+  }
+}
+
+///|
+fn escape_char_literal(c : Char) -> String {
+  "'\{escape_char_body(c)}'"
+}
+
+///|
 fn expr_to_string(expr : Expr) -> String {
   match expr {
     UnitExpr => "()"
     IntExpr(n) => n.to_string()
     BoolExpr(b) => b.to_string()
+    CharExpr(c) => escape_char_literal(c)
     StringExpr(text) => escape_string_literal(text)
     VarExpr(name) => name
     IfExpr(cond, then_, else_) =>
@@ -455,6 +480,7 @@ fn decl_type_to_string(type_ : DeclType) -> String {
     UnitDeclType => "unit"
     IntDeclType => "int"
     BoolDeclType => "bool"
+    CharDeclType => "char"
     StringDeclType => "string"
     TypeVarDeclType(name) => name
     NamedDeclType(name, args) =>
@@ -580,6 +606,7 @@ fn pattern_to_string(pattern : Pattern) -> String {
     WildcardPat => "_"
     IntPat(n) => n.to_string()
     BoolPat(b) => b.to_string()
+    CharPat(c) => escape_char_literal(c)
     UnitPat => "()"
     VarPat(name) => name
     CtorPat(name, patterns) => ctor_pattern_to_string(name, patterns)
@@ -599,6 +626,7 @@ fn pattern_hint_string(pattern : Pattern) -> String {
     WildcardPat => "_"
     IntPat(n) => n.to_string()
     BoolPat(b) => b.to_string()
+    CharPat(c) => escape_char_literal(c)
     UnitPat => "()"
     VarPat(name) => name
     CtorPat(name, patterns) => ctor_pattern_hint_string(name, patterns)
@@ -715,6 +743,7 @@ fn value_to_string(value : Value) -> String {
     UnitValue => "()"
     IntValue(n) => n.to_string()
     BoolValue(b) => b.to_string()
+    CharValue(c) => escape_char_literal(c)
     StringValue(text) => escape_string_literal(text)
     ClosureValue(_) => "<fun>"
     CtorFuncValue(name, arity, values) =>
@@ -876,6 +905,22 @@ fn read_string_body(
 }
 
 ///|
+fn read_char_literal(code : StringView) -> (Char, StringView) raise MiniMLError {
+  match code {
+    ['\\', 'n', '\'', .. rest] => ('\n', rest)
+    ['\\', 'r', '\'', .. rest] => ('\r', rest)
+    ['\\', 't', '\'', .. rest] => ('\t', rest)
+    ['\\', '\'', '\'', .. rest] => ('\'', rest)
+    ['\\', '\\', '\'', .. rest] => ('\\', rest)
+    ['\\', c, ..] => raise LexError("unsupported char escape `\\\{c}`")
+    [c, '\'', .. rest] => (c, rest)
+    ['\'', ..] => raise LexError("empty char literal")
+    [] => raise LexError("unterminated char literal")
+    _ => raise LexError("invalid char literal")
+  }
+}
+
+///|
 fn skip_line_comment(code : StringView) -> StringView {
   match code {
     ['\n', .. rest] => rest
@@ -938,6 +983,11 @@ pub fn tokenize(code : String) -> ArrayView[Token] raise MiniMLError {
       ['"', .. next] => {
         let (text, rest2) = read_string_body(next)
         tokens.push(StringTok(text))
+        continue rest2
+      }
+      ['\'', .. next] => {
+        let (c, rest2) = read_char_literal(next)
+        tokens.push(CharTok(c))
         continue rest2
       }
       ['(', .. next] => {
@@ -1052,6 +1102,7 @@ fn is_atom_start(token : Token) -> Bool {
   match token {
     IntTok(_)
     | BoolTok(_)
+    | CharTok(_)
     | StringTok(_)
     | IdentTok(_)
     | CtorTok(_)
@@ -1068,6 +1119,7 @@ fn is_pattern_atom_start(token : Token) -> Bool {
     WildcardTok
     | IntTok(_)
     | BoolTok(_)
+    | CharTok(_)
     | IdentTok(_)
     | CtorTok(_)
     | LParenTok
@@ -1163,6 +1215,7 @@ fn parse_pattern_atom(
     WildcardTok => (WildcardPat, rest)
     IntTok(n) => (IntPat(n), rest)
     BoolTok(b) => (BoolPat(b), rest)
+    CharTok(c) => (CharPat(c), rest)
     IdentTok(name) => (VarPat(name), rest)
     CtorTok(name) =>
       match rest {
@@ -1308,6 +1361,7 @@ fn parse_atom(
   match tok {
     IntTok(n) => (IntExpr(n), rest)
     BoolTok(b) => (BoolExpr(b), rest)
+    CharTok(c) => (CharExpr(c), rest)
     StringTok(text) => (StringExpr(text), rest)
     IdentTok(name) => (VarExpr(name), rest)
     CtorTok(name) =>
@@ -1824,6 +1878,7 @@ fn parse_decl_type_atom(
     IdentTok("unit") => (UnitDeclType, rest)
     IdentTok("int") => (IntDeclType, rest)
     IdentTok("bool") => (BoolDeclType, rest)
+    IdentTok("char") => (CharDeclType, rest)
     IdentTok("string") => (StringDeclType, rest)
     IdentTok(name) => (TypeVarDeclType(name), rest)
     CtorTok(name) =>
@@ -2468,6 +2523,7 @@ fn value_eq(lhs : Value, rhs : Value) -> Bool raise MiniMLError {
     (UnitValue, UnitValue) => true
     (IntValue(a), IntValue(b)) => a == b
     (BoolValue(a), BoolValue(b)) => a == b
+    (CharValue(a), CharValue(b)) => a == b
     (StringValue(a), StringValue(b)) => a == b
     (VariantValue(name1, xs), VariantValue(name2, ys)) => {
       if name1 != name2 || xs.length() != ys.length() {
@@ -2512,6 +2568,7 @@ fn resolve_decl_type(
     UnitDeclType => UnitType
     IntDeclType => IntType
     BoolDeclType => BoolType
+    CharDeclType => CharType
     StringDeclType => StringType
     TypeVarDeclType(name) =>
       match type_params.get(name) {
@@ -2558,6 +2615,7 @@ fn resolve_annotation_type(
     UnitDeclType => UnitType
     IntDeclType => IntType
     BoolDeclType => BoolType
+    CharDeclType => CharType
     StringDeclType => StringType
     TypeVarDeclType(name) =>
       raise TypeError("type annotation cannot use free type variable `\{name}`")
@@ -2630,6 +2688,11 @@ fn match_pattern(pattern : Pattern, value : Value, env : Env) -> Env? {
     BoolPat(expected) =>
       match value {
         BoolValue(actual) if expected == actual => Some(env)
+        _ => None
+      }
+    CharPat(expected) =>
+      match value {
+        CharValue(actual) if expected == actual => Some(env)
         _ => None
       }
     VarPat(name) => Some(env.extend(name, value))
@@ -2779,6 +2842,7 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
     UnitExpr => UnitValue
     IntExpr(n) => IntValue(n)
     BoolExpr(b) => BoolValue(b)
+    CharExpr(c) => CharValue(c)
     StringExpr(text) => StringValue(text)
     VarExpr(name) => env.lookup(name)
     IfExpr(cond, then_, else_) =>
@@ -2921,6 +2985,7 @@ fn type_to_string_with(type_ : Type, printer : TypePrinter) -> String {
     UnitType => "unit"
     IntType => "int"
     BoolType => "bool"
+    CharType => "char"
     StringType => "string"
     VarType(id) => type_var_name(printer, id)
     FunType(arg, ret) => {
@@ -2999,6 +3064,7 @@ fn occurs_in(var_id : Int, type_ : Type, ctx : InferCtx) -> Bool {
   match prune_type(type_, ctx) {
     VarType(id) => id == var_id
     UnitType => false
+    CharType => false
     StringType => false
     FunType(arg, ret) =>
       occurs_in(var_id, arg, ctx) || occurs_in(var_id, ret, ctx)
@@ -3051,6 +3117,7 @@ fn unify(
     (UnitType, UnitType) => ()
     (IntType, IntType) => ()
     (BoolType, BoolType) => ()
+    (CharType, CharType) => ()
     (StringType, StringType) => ()
     (FunType(arg1, ret1), FunType(arg2, ret2)) => {
       unify(arg1, arg2, ctx)
@@ -3106,7 +3173,7 @@ fn diff_vars(lhs : Array[Int], rhs : Array[Int]) -> Array[Int] {
 ///|
 fn ftv_type(type_ : Type, ctx : InferCtx) -> Array[Int] {
   match prune_type(type_, ctx) {
-    UnitType | IntType | BoolType | StringType => []
+    UnitType | IntType | BoolType | CharType | StringType => []
     VarType(id) => [id]
     FunType(arg, ret) => {
       let vars = ftv_type(arg, ctx)
@@ -3162,6 +3229,7 @@ fn instantiate_type(
     UnitType => UnitType
     IntType => IntType
     BoolType => BoolType
+    CharType => CharType
     StringType => StringType
     VarType(id) =>
       match mapping.get(id) {
@@ -3269,6 +3337,10 @@ fn infer_pattern(
       unify(expected, BoolType, ctx)
       env
     }
+    CharPat(_) => {
+      unify(expected, CharType, ctx)
+      env
+    }
     VarPat(name) =>
       env.extend(name, Scheme::{ vars: [], ty: prune_type(expected, ctx) })
     CtorPat(name, patterns) =>
@@ -3371,7 +3443,7 @@ fn bind_generalized_pattern(
   ctx : InferCtx,
 ) -> TypeEnv {
   match pattern {
-    WildcardPat | UnitPat | IntPat(_) | BoolPat(_) | NilPat => env
+    WildcardPat | UnitPat | IntPat(_) | BoolPat(_) | CharPat(_) | NilPat => env
     VarPat(name) => env.extend(name, generalize(base_env, expected, ctx))
     CtorPat(name, patterns) =>
       match ctx.ctor_to_enum.get(name) {
@@ -3598,6 +3670,24 @@ fn specialize_int_rows(
     } else {
       match head {
         IntPat(value) if value == target => Some(tail.to_owned())
+        _ => None
+      }
+    }
+  })
+}
+
+///|
+fn specialize_char_rows(
+  rows : Array[Array[Pattern]],
+  target : Char,
+) -> Array[Array[Pattern]] {
+  rows.filter_map(row => {
+    guard row is [head, .. tail] else { None }
+    if pattern_is_wild(head) {
+      Some(tail.to_owned())
+    } else {
+      match head {
+        CharPat(value) if value == target => Some(tail.to_owned())
         _ => None
       }
     }
@@ -3874,6 +3964,8 @@ fn useful_vector(
       useful_vector(specialize_unit_rows(rows), tail_vec, tail_tys, ctx)
     IntPat(n) =>
       useful_vector(specialize_int_rows(rows, n), tail_vec, tail_tys, ctx)
+    CharPat(c) =>
+      useful_vector(specialize_char_rows(rows, c), tail_vec, tail_tys, ctx)
     BoolPat(b) =>
       useful_vector(specialize_bool_rows(rows, b), tail_vec, tail_tys, ctx)
     CtorPat(name, patterns) =>
@@ -4309,6 +4401,7 @@ fn infer_expr(
     UnitExpr => UnitType
     IntExpr(_) => IntType
     BoolExpr(_) => BoolType
+    CharExpr(_) => CharType
     StringExpr(_) => StringType
     VarExpr(name) => instantiate(env.lookup(name), ctx)
     IfExpr(cond, then_, else_) => {
