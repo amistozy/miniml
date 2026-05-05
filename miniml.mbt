@@ -57,6 +57,7 @@ pub(all) enum Token {
   NotTok
   ConsTok
   CommaTok
+  SemiTok
   BarTok
   EOFTok
 } derive(Eq)
@@ -103,6 +104,7 @@ pub impl Show for Token with output(self, logger) {
     NotTok => "!"
     ConsTok => "::"
     CommaTok => ","
+    SemiTok => ";"
     BarTok => "|"
     EOFTok => "<eof>"
   }
@@ -227,6 +229,7 @@ pub(all) enum Expr {
   LetRecGroupExpr(Array[RecBinding], Expr)
   FunExpr(String, DeclType?, Expr)
   AscribeExpr(Expr, DeclType)
+  SeqExpr(Expr, Expr)
   ApplyExpr(Expr, Expr)
   BinaryExpr(BinaryOp, Expr, Expr)
   NegExpr(Expr)
@@ -411,6 +414,7 @@ fn expr_to_string(expr : Expr) -> String {
       "fun \{binder_to_string(param, annot)} -> \{expr_to_string(body)}"
     AscribeExpr(expr, type_) =>
       "(\{expr_to_string(expr)} : \{decl_type_to_string(type_)})"
+    SeqExpr(lhs, rhs) => "(\{expr_to_string(lhs)}; \{expr_to_string(rhs)})"
     ApplyExpr(func, arg) => "(\{expr_to_string(func)} \{expr_to_string(arg)})"
     BinaryExpr(op, lhs, rhs) =>
       "(\{expr_to_string(lhs)} \{op} \{expr_to_string(rhs)})"
@@ -946,6 +950,10 @@ pub fn tokenize(code : String) -> ArrayView[Token] raise MiniMLError {
       }
       [',', .. next] => {
         tokens.push(CommaTok)
+        continue next
+      }
+      [';', .. next] => {
+        tokens.push(SemiTok)
         continue next
       }
       ['|', .. next] => {
@@ -1968,7 +1976,7 @@ fn parse_expr(
   tokens : ArrayView[Token],
 ) -> (Expr, ArrayView[Token]) raise MiniMLError {
   let (expr0, rest0) = parse_enum(tokens)
-  for expr = expr0, rest = rest0 {
+  let (expr1, rest1) = for expr = expr0, rest = rest0 {
     match rest {
       [ColonTok, .. rest2] => {
         let (type_, rest3) = parse_decl_type(rest2)
@@ -1976,6 +1984,13 @@ fn parse_expr(
       }
       _ => break (expr, rest)
     }
+  }
+  match rest1 {
+    [SemiTok, .. rest2] => {
+      let (rhs, rest3) = parse_expr(rest2)
+      (SeqExpr(expr1, rhs), rest3)
+    }
+    _ => (expr1, rest1)
   }
 }
 
@@ -2335,6 +2350,10 @@ fn eval_expr(expr : Expr, env : Env) -> Value raise MiniMLError {
     LetRecGroupExpr(bindings, body) => eval_rec_group(bindings, env, body)
     FunExpr(param, _, body) => ClosureValue(param, body, env)
     AscribeExpr(expr, _) => eval_expr(expr, env)
+    SeqExpr(lhs, rhs) => {
+      let _ = eval_expr(lhs, env)
+      eval_expr(rhs, env)
+    }
     ApplyExpr(func, arg) => {
       let func_value = eval_expr(func, env)
       let arg_value = eval_expr(arg, env)
@@ -3898,6 +3917,11 @@ fn infer_expr(
       let expected = resolve_annotation_type(annot, ctx)
       unify(expr_type, expected, ctx)
       prune_type(expected, ctx)
+    }
+    SeqExpr(lhs, rhs) => {
+      let lhs_type = infer_expr(lhs, env, ctx)
+      unify(lhs_type, UnitType, ctx)
+      infer_expr(rhs, env, ctx)
     }
     ApplyExpr(func, arg) => {
       let func_type = infer_expr(func, env, ctx)

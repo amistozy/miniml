@@ -53,6 +53,17 @@ test "unit literal infers unit type" {
 }
 
 ///|
+test "sequence evaluates in order and returns rhs" {
+  let code = "(); 42"
+  assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "sequence infers rhs type" {
+  assert_eq(@miniml.infer("(); \"ok\""), "string")
+}
+
+///|
 test "string literal evaluates and prints escaped" {
   let code = "\"hi\\nmini\""
   assert_eq(@miniml.interpret(code), "\"hi\\nmini\"")
@@ -322,6 +333,18 @@ test "string equality works" {
 test "unit equality works" {
   let code = "if () == () then 42 else 0"
   assert_eq(@miniml.interpret(code), "42")
+}
+
+///|
+test "sequence rejects non unit lhs" {
+  let msg = try {
+    let _ = @miniml.infer("1; 2")
+    "no error"
+  } catch {
+    TypeError(msg) => msg
+    _ => "wrong error"
+  }
+  assert_eq(msg, "cannot unify int with unit")
 }
 
 ///|

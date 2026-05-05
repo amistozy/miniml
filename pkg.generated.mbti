@@ -85,6 +85,7 @@ pub(all) enum Expr {
   LetRecGroupExpr(Array[RecBinding], Expr)
   FunExpr(String, DeclType?, Expr)
   AscribeExpr(Expr, DeclType)
+  SeqExpr(Expr, Expr)
   ApplyExpr(Expr, Expr)
   BinaryExpr(BinaryOp, Expr, Expr)
   NegExpr(Expr)
@@ -174,6 +175,7 @@ pub(all) enum Token {
   NotTok
   ConsTok
   CommaTok
+  SemiTok
   BarTok
   EOFTok
 } derive(Eq)

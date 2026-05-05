@@ -40,6 +40,12 @@ test "tokenize string literal" {
 }
 
 ///|
+test "tokenize semicolon" {
+  let tokens = tokenize("(); 1")
+  assert_eq(tokens[2], SemiTok)
+}
+
+///|
 test "tokenize let rec and keyword" {
   let tokens = tokenize("let rec even n = odd n and odd n = even n in even 0")
   assert_eq(tokens[0], LetTok)
@@ -90,11 +96,23 @@ test "parse string literal expression" {
 }
 
 ///|
+test "parse sequence expression" {
+  let expr = parse("(); 1")
+  assert_true(expr is SeqExpr(UnitExpr, IntExpr(1)))
+}
+
+///|
 test "parse unit annotation" {
   let expr = parse("let x : unit = () in x")
   assert_true(
     expr is LetExpr(VarPat("x"), Some(UnitDeclType), UnitExpr, VarExpr("x")),
   )
+}
+
+///|
+test "sequence is right associative" {
+  let expr = parse("(); (); 1")
+  assert_true(expr is SeqExpr(UnitExpr, SeqExpr(UnitExpr, IntExpr(1))))
 }
 
 ///|

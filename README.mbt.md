@@ -22,6 +22,7 @@ The current language supports:
 - tuples and lists
 - pattern matching
 - match guards: `| pat if cond -> expr`
+- sequencing: `expr1; expr2` with `unit`-typed left-hand side
 - local enum declarations: `enum T = ... in expr`
 - parameterized enums: `enum Option[a] = None | Some(a) in ...`
 - direct multi-argument variants: `RGB(1, 2, 3)`
@@ -63,6 +64,13 @@ Unit:
 let ping : unit = () in
 match ping with
 | () -> 42
+```
+
+Sequencing:
+
+```ml
+();
+"done"
 ```
 
 Match guards:
