@@ -118,6 +118,7 @@ pub(all) enum Pattern {
   CharPat(Char)
   UnitPat
   VarPat(String)
+  AsPat(Pattern, String)
   CtorPat(String, Array[Pattern])
   TuplePat(Array[Pattern])
   NilPat
@@ -150,6 +151,7 @@ pub(all) enum Token {
   InTok
   RecTok
   AndKwTok
+  AsKwTok
   EnumTok
   FunTok
   IfTok

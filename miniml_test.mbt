@@ -185,6 +185,27 @@ test "char pattern match evaluates" {
 }
 
 ///|
+test "as-pattern match evaluates and keeps whole value" {
+  let code =
+    #| match [1, 2] with
+    #| | x :: _ as whole -> whole
+    #| | _ -> []
+  assert_eq(@miniml.interpret(code), "[1, 2]")
+}
+
+///|
+test "let as-pattern evaluates" {
+  let code = "let (x, _) as pair = (1, 2) in pair"
+  assert_eq(@miniml.interpret(code), "(1, 2)")
+}
+
+///|
+test "fun as-pattern parameter evaluates" {
+  let code = "let first = fun (x, _) as pair -> (x, pair) in first (1, (2, 3))"
+  assert_eq(@miniml.interpret(code), "(1, (1, (2, 3)))")
+}
+
+///|
 test "or-pattern match evaluates" {
   let code =
     #| match [1] with

@@ -29,6 +29,7 @@ pub(all) enum Token {
   InTok
   RecTok
   AndKwTok
+  AsKwTok
   EnumTok
   FunTok
   IfTok
@@ -79,6 +80,7 @@ pub impl Show for Token with output(self, logger) {
     InTok => "in"
     RecTok => "rec"
     AndKwTok => "and"
+    AsKwTok => "as"
     EnumTok => "enum"
     FunTok => "fun"
     IfTok => "if"
@@ -160,6 +162,7 @@ pub(all) enum Pattern {
   CharPat(Char)
   UnitPat
   VarPat(String)
+  AsPat(Pattern, String)
   CtorPat(String, Array[Pattern])
   TuplePat(Array[Pattern])
   NilPat
@@ -609,6 +612,7 @@ fn pattern_to_string(pattern : Pattern) -> String {
     CharPat(c) => escape_char_literal(c)
     UnitPat => "()"
     VarPat(name) => name
+    AsPat(pattern, name) => "\{pattern_to_string(pattern)} as \{name}"
     CtorPat(name, patterns) => ctor_pattern_to_string(name, patterns)
     TuplePat(patterns) => {
       let items = patterns.map(p => pattern_to_string(p)).join(", ")
@@ -629,6 +633,7 @@ fn pattern_hint_string(pattern : Pattern) -> String {
     CharPat(c) => escape_char_literal(c)
     UnitPat => "()"
     VarPat(name) => name
+    AsPat(pattern, name) => "\{pattern_hint_string(pattern)} as \{name}"
     CtorPat(name, patterns) => ctor_pattern_hint_string(name, patterns)
     TuplePat(patterns) => {
       let items = patterns.map(p => pattern_hint_string(p)).join(", ")
@@ -646,7 +651,7 @@ fn pattern_hint_string(pattern : Pattern) -> String {
 fn list_hint_string(pattern : Pattern) -> String? {
   let items = []
   for current = pattern {
-    match current {
+    match strip_as_pattern(current) {
       NilPat => {
         let joined = items.join(", ")
         break Some("[\{joined}]")
@@ -672,6 +677,14 @@ fn list_hint_string(pattern : Pattern) -> String? {
           break Some("[\{joined} | \{tail}]")
         }
     }
+  }
+}
+
+///|
+fn strip_as_pattern(pattern : Pattern) -> Pattern {
+  match pattern {
+    AsPat(inner, _) => strip_as_pattern(inner)
+    _ => pattern
   }
 }
 
@@ -1066,6 +1079,7 @@ pub fn tokenize(code : String) -> ArrayView[Token] raise MiniMLError {
           "in" => InTok
           "rec" => RecTok
           "and" => AndKwTok
+          "as" => AsKwTok
           "enum" => EnumTok
           "fun" => FunTok
           "if" => IfTok
@@ -1218,6 +1232,10 @@ fn collect_pattern_bound_names(
 ) -> Unit {
   match pattern {
     VarPat(name) => add_unique_name(names, name)
+    AsPat(pattern, name) => {
+      collect_pattern_bound_names(pattern, names)
+      add_unique_name(names, name)
+    }
     CtorPat(_, patterns) | TuplePat(patterns) =>
       for pattern in patterns {
         collect_pattern_bound_names(pattern, names)
@@ -1358,13 +1376,27 @@ fn parse_pattern_atom(
 fn parse_pattern(
   tokens : ArrayView[Token],
 ) -> (Pattern, ArrayView[Token]) raise MiniMLError {
-  let (head, rest) = parse_pattern_atom(tokens)
+  let (head, rest) = parse_pattern_cons(tokens)
   match rest {
-    [ConsTok, .. rest2] => {
-      let (tail, rest3) = parse_pattern(rest2)
-      (ConsPat(head, tail), rest3)
+    [AsKwTok, .. rest2] => {
+      let (name, rest3) = expect_ident(rest2)
+      (AsPat(head, name), rest3)
     }
     _ => (head, rest)
+  }
+}
+
+///|
+fn parse_pattern_cons(
+  tokens : ArrayView[Token],
+) -> (Pattern, ArrayView[Token]) raise MiniMLError {
+  let (head0, rest0) = parse_pattern_atom(tokens)
+  match rest0 {
+    [ConsTok, .. rest2] => {
+      let (tail, rest3) = parse_pattern_cons(rest2)
+      (ConsPat(head0, tail), rest3)
+    }
+    _ => (head0, rest0)
   }
 }
 
@@ -2759,6 +2791,11 @@ fn match_pattern(pattern : Pattern, value : Value, env : Env) -> Env? {
         _ => None
       }
     VarPat(name) => Some(env.extend(name, value))
+    AsPat(pattern, name) =>
+      match match_pattern(pattern, value, env) {
+        Some(next_env) => Some(next_env.extend(name, value))
+        None => None
+      }
     CtorPat(name, patterns) =>
       match value {
         VariantValue(actual, values) => {
@@ -3406,6 +3443,10 @@ fn infer_pattern(
     }
     VarPat(name) =>
       env.extend(name, Scheme::{ vars: [], ty: prune_type(expected, ctx) })
+    AsPat(pattern, name) => {
+      let env2 = infer_pattern(pattern, expected, env, ctx)
+      env2.extend(name, Scheme::{ vars: [], ty: prune_type(expected, ctx) })
+    }
     CtorPat(name, patterns) =>
       match ctx.ctor_to_enum.get(name) {
         Some(enum_id) => {
@@ -3508,6 +3549,10 @@ fn bind_generalized_pattern(
   match pattern {
     WildcardPat | UnitPat | IntPat(_) | BoolPat(_) | CharPat(_) | NilPat => env
     VarPat(name) => env.extend(name, generalize(base_env, expected, ctx))
+    AsPat(pattern, name) => {
+      let env2 = bind_generalized_pattern(pattern, expected, base_env, env, ctx)
+      env2.extend(name, generalize(base_env, expected, ctx))
+    }
     CtorPat(name, patterns) =>
       match ctx.ctor_to_enum.get(name) {
         Some(enum_id) =>
@@ -3587,7 +3632,7 @@ fn bind_generalized_pattern(
 
 ///|
 fn pattern_is_wild(pattern : Pattern) -> Bool {
-  match pattern {
+  match strip_as_pattern(pattern) {
     WildcardPat | VarPat(_) => true
     _ => false
   }
@@ -3624,10 +3669,16 @@ fn match_matrix_kind(ty : Type, ctx : InferCtx) -> MatchMatrixKind {
 ///|
 fn default_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
-    if row is [head, .. tail] && pattern_is_wild(head) {
-      Some(tail.to_owned())
-    } else {
-      None
+    match row {
+      [head, .. tail] => {
+        let head = strip_as_pattern(head)
+        if pattern_is_wild(head) {
+          Some(tail.to_owned())
+        } else {
+          None
+        }
+      }
+      _ => None
     }
   })
 }
@@ -3639,6 +3690,7 @@ fn specialize_bool_rows(
 ) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
     guard row is [head, .. tail] else { None }
+    let head = strip_as_pattern(head)
     if pattern_is_wild(head) {
       Some(tail.to_owned())
     } else {
@@ -3654,6 +3706,7 @@ fn specialize_bool_rows(
 fn specialize_unit_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
     guard row is [head, .. tail] else { None }
+    let head = strip_as_pattern(head)
     if pattern_is_wild(head) {
       Some(tail.to_owned())
     } else {
@@ -3669,6 +3722,7 @@ fn specialize_unit_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
 fn specialize_none_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
     guard row is [head, .. tail] else { None }
+    let head = strip_as_pattern(head)
     if pattern_is_wild(head) {
       Some(tail.to_owned())
     } else {
@@ -3684,6 +3738,7 @@ fn specialize_none_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
 fn specialize_some_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
     guard row is [head, .. tail] else { None }
+    let head = strip_as_pattern(head)
     if pattern_is_wild(head) {
       Some([WildcardPat, ..tail])
     } else {
@@ -3703,6 +3758,7 @@ fn specialize_enum_rows(
 ) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
     guard row is [head, .. tail] else { None }
+    let head = strip_as_pattern(head)
     if pattern_is_wild(head) {
       Some([..wildcard_patterns(arity), ..tail])
     } else {
@@ -3728,6 +3784,7 @@ fn specialize_int_rows(
 ) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
     guard row is [head, .. tail] else { None }
+    let head = strip_as_pattern(head)
     if pattern_is_wild(head) {
       Some(tail.to_owned())
     } else {
@@ -3746,6 +3803,7 @@ fn specialize_char_rows(
 ) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
     guard row is [head, .. tail] else { None }
+    let head = strip_as_pattern(head)
     if pattern_is_wild(head) {
       Some(tail.to_owned())
     } else {
@@ -3764,6 +3822,7 @@ fn specialize_tuple_rows(
 ) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
     guard row is [head, .. tail] else { None }
+    let head = strip_as_pattern(head)
     if pattern_is_wild(head) {
       Some([..wildcard_patterns(arity), ..tail])
     } else {
@@ -3779,6 +3838,7 @@ fn specialize_tuple_rows(
 fn specialize_nil_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
     guard row is [head, .. tail] else { None }
+    let head = strip_as_pattern(head)
     if pattern_is_wild(head) {
       Some(tail.to_owned())
     } else {
@@ -3794,6 +3854,7 @@ fn specialize_nil_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
 fn specialize_cons_rows(rows : Array[Array[Pattern]]) -> Array[Array[Pattern]] {
   rows.filter_map(row => {
     guard row is [head, .. tail] else { None }
+    let head = strip_as_pattern(head)
     if pattern_is_wild(head) {
       Some([WildcardPat, WildcardPat, ..tail])
     } else {
@@ -3925,8 +3986,10 @@ fn useful_vector(
   }
   guard vector is [head_pat, .. tail_vec]
   guard types is [head_ty, .. tail_tys]
+  let head_pat = strip_as_pattern(head_pat)
   let head_ty = prune_type(head_ty, ctx)
   match head_pat {
+    AsPat(pattern, _) => useful_vector(rows, [pattern, ..tail_vec], types, ctx)
     WildcardPat | VarPat(_) =>
       match match_matrix_kind(head_ty, ctx) {
         UniversalKind =>

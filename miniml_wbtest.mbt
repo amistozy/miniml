@@ -46,6 +46,12 @@ test "tokenize char literal" {
 }
 
 ///|
+test "tokenize as-pattern keyword" {
+  let tokens = tokenize("match xs with | x :: _ as whole -> whole")
+  assert_true(tokens.contains(AsKwTok))
+}
+
+///|
 test "tokenize semicolon" {
   let tokens = tokenize("(); 1")
   assert_eq(tokens[2], SemiTok)
@@ -126,6 +132,20 @@ test "parse char annotation" {
   assert_true(
     expr
     is LetExpr(VarPat("c"), Some(CharDeclType), CharExpr('x'), VarExpr("c")),
+  )
+}
+
+///|
+test "parse let as-pattern" {
+  let expr = parse("let (x, _) as pair = (1, 2) in pair")
+  assert_true(
+    expr
+    is LetExpr(
+      AsPat(TuplePat([VarPat("x"), WildcardPat]), "pair"),
+      None,
+      TupleExpr([IntExpr(1), IntExpr(2)]),
+      VarExpr("pair")
+    ),
   )
 }
 
@@ -459,6 +479,21 @@ test "parse char pattern match" {
       assert_eq(arms.length(), 2)
       assert_true(arms[0].pattern is CharPat('x'))
       assert_true(arms[1].pattern is WildcardPat)
+    }
+    _ => assert_true(false)
+  }
+}
+
+///|
+test "parse as-pattern match" {
+  let expr = parse("match xs with | x :: _ as whole -> whole | _ -> []")
+  match expr {
+    MatchExpr(VarExpr("xs"), arms) => {
+      assert_eq(arms.length(), 2)
+      assert_true(
+        arms[0].pattern is AsPat(ConsPat(VarPat("x"), WildcardPat), "whole"),
+      )
+      assert_true(arms[0].body is VarExpr("whole"))
     }
     _ => assert_true(false)
   }
